@@ -1,0 +1,134 @@
+Rank Aggregation Evaluation - Kendall Tau Distance
+================================================================================
+
+Users evaluated: 6040
+Max items per ranking: 500
+
+Results (sorted by Mean Tau, higher = better agreement):
+--------------------------------------------------------------------------------
+Rank  Method          Mean Tau     Std Tau      Mean Norm Dist  Std Norm Dist  
+--------------------------------------------------------------------------------
+1     PostNDCG        0.2709       0.1009       0.3645          0.0504         
+2     Median          0.2685       0.1089       0.3658          0.0545         
+3     RRF             0.2595       0.1065       0.3702          0.0532         
+4     CombANZ         0.2546       0.1006       0.3727          0.0503         
+5     MC2             0.2474       0.0992       0.3763          0.0496         
+6     CombMNZ         0.2430       0.1182       0.3785          0.0591         
+7     MC4             0.2418       0.0953       0.3791          0.0476         
+8     Dowdall         0.2386       0.1084       0.3807          0.0542         
+9     iRANK           0.2386       0.1084       0.3807          0.0542         
+10    ER              0.2239       0.1178       0.3881          0.0589         
+11    BordaCount      0.1462       0.1137       0.4269          0.0568         
+12    Mean            0.1462       0.1137       0.4269          0.0568         
+13    CG              0.1462       0.1137       0.4269          0.0568         
+14    DIBRA           0.1432       0.1142       0.4284          0.0571         
+15    CombSUM         0.1365       0.1139       0.4318          0.0569         
+16    MC3             0.1268       0.1114       0.4366          0.0557         
+17    CombMIN         0.1248       0.0942       0.4376          0.0471         
+18    CombMAX         0.1093       0.1139       0.4454          0.0570         
+19    MC1             0.0978       0.1064       0.4511          0.0532         
+20    HPA             -0.0164      0.1367       0.5082          0.0683         
+
+
+Detailed Statistics:
+--------------------------------------------------------------------------------
+
+PostNDCG:
+  Kendall Tau:        mean=0.2709, std=0.1009
+  Normalized Distance: mean=0.3645, std=0.0504
+  Raw Distance:        mean=1368.3, std=283.3, min=30, max=2531
+
+Median:
+  Kendall Tau:        mean=0.2685, std=0.1089
+  Normalized Distance: mean=0.3658, std=0.0545
+  Raw Distance:        mean=1399.2, std=306.0, min=30, max=2569
+
+RRF:
+  Kendall Tau:        mean=0.2595, std=0.1065
+  Normalized Distance: mean=0.3702, std=0.0532
+  Raw Distance:        mean=1386.9, std=318.9, min=39, max=2419
+
+CombANZ:
+  Kendall Tau:        mean=0.2546, std=0.1006
+  Normalized Distance: mean=0.3727, std=0.0503
+  Raw Distance:        mean=1397.6, std=294.3, min=39, max=2625
+
+MC2:
+  Kendall Tau:        mean=0.2474, std=0.0992
+  Normalized Distance: mean=0.3763, std=0.0496
+  Raw Distance:        mean=1434.7, std=312.4, min=38, max=2491
+
+CombMNZ:
+  Kendall Tau:        mean=0.2430, std=0.1182
+  Normalized Distance: mean=0.3785, std=0.0591
+  Raw Distance:        mean=1530.3, std=257.5, min=57, max=2660
+
+MC4:
+  Kendall Tau:        mean=0.2418, std=0.0953
+  Normalized Distance: mean=0.3791, std=0.0476
+  Raw Distance:        mean=1467.0, std=303.5, min=35, max=2631
+
+Dowdall:
+  Kendall Tau:        mean=0.2386, std=0.1084
+  Normalized Distance: mean=0.3807, std=0.0542
+  Raw Distance:        mean=1118.0, std=304.6, min=38, max=2447
+
+iRANK:
+  Kendall Tau:        mean=0.2386, std=0.1084
+  Normalized Distance: mean=0.3807, std=0.0542
+  Raw Distance:        mean=1118.0, std=304.6, min=38, max=2447
+
+ER:
+  Kendall Tau:        mean=0.2239, std=0.1178
+  Normalized Distance: mean=0.3881, std=0.0589
+  Raw Distance:        mean=903.3, std=279.3, min=36, max=2017
+
+BordaCount:
+  Kendall Tau:        mean=0.1462, std=0.1137
+  Normalized Distance: mean=0.4269, std=0.0568
+  Raw Distance:        mean=1801.1, std=325.4, min=66, max=2867
+
+Mean:
+  Kendall Tau:        mean=0.1462, std=0.1137
+  Normalized Distance: mean=0.4269, std=0.0568
+  Raw Distance:        mean=1801.1, std=325.4, min=66, max=2867
+
+CG:
+  Kendall Tau:        mean=0.1462, std=0.1137
+  Normalized Distance: mean=0.4269, std=0.0568
+  Raw Distance:        mean=1801.1, std=325.4, min=66, max=2867
+
+DIBRA:
+  Kendall Tau:        mean=0.1432, std=0.1142
+  Normalized Distance: mean=0.4284, std=0.0571
+  Raw Distance:        mean=1817.4, std=354.1, min=62, max=2912
+
+CombSUM:
+  Kendall Tau:        mean=0.1365, std=0.1139
+  Normalized Distance: mean=0.4318, std=0.0569
+  Raw Distance:        mean=1822.5, std=331.7, min=67, max=2867
+
+MC3:
+  Kendall Tau:        mean=0.1268, std=0.1114
+  Normalized Distance: mean=0.4366, std=0.0557
+  Raw Distance:        mean=1277.8, std=256.0, min=282, max=2150
+
+CombMIN:
+  Kendall Tau:        mean=0.1248, std=0.0942
+  Normalized Distance: mean=0.4376, std=0.0471
+  Raw Distance:        mean=645.0, std=240.8, min=0, max=1341
+
+CombMAX:
+  Kendall Tau:        mean=0.1093, std=0.1139
+  Normalized Distance: mean=0.4454, std=0.0570
+  Raw Distance:        mean=1144.1, std=379.1, min=0, max=2224
+
+MC1:
+  Kendall Tau:        mean=0.0978, std=0.1064
+  Normalized Distance: mean=0.4511, std=0.0532
+  Raw Distance:        mean=1425.2, std=307.2, min=387, max=2339
+
+HPA:
+  Kendall Tau:        mean=-0.0164, std=0.1367
+  Normalized Distance: mean=0.5082, std=0.0683
+  Raw Distance:        mean=707.0, std=232.4, min=28, max=1412
