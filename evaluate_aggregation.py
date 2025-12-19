@@ -1,290 +1,387 @@
-"""
-Evaluate Rank Aggregation Methods using Kendall Tau Distance
-
-Measures how well each aggregated ranking represents the consensus
-by computing Kendall tau distance against each user's ranking list.
-
-Kendall tau distance = number of pairwise disagreements between two rankings.
-"""
-
 import numpy as np
+import csv
+import os
 from collections import defaultdict
 import argparse
-from scipy.stats import kendalltau
-import time
+import sys
 
+# =============================================================================
+# Data Loading
+# =============================================================================
 
-def load_user_rankings(filepath="recommendations.txt"):
-    """Load user rankings from file."""
-    rankings = []
+def load_rankings_from_csv(filepath="recommendations.csv"):
+    """
+    Load recommendations from CSV file.
+    Expected Format: User_ID,Movie_ID,Estimated_Rating
+    """
+    print(f"Loading data from '{filepath}'...")
     
-    with open(filepath, "r") as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) > 1:
-                user_id = int(parts[0])
-                movie_ids = [int(m) for m in parts[1:]]
-                rankings.append((user_id, movie_ids))
+    user_items = defaultdict(list)
+    all_items = set()
     
-    print(f"Loaded {len(rankings)} user rankings")
-    return rankings
-
-
-def load_aggregated_rankings(filepath="aggregated_ranking.txt"):
-    """Load aggregated rankings from file (all methods in one file)."""
-    aggregated = {}
-    current_method = None
-    current_ranking = []
-    
-    with open(filepath, "r") as f:
-        for line in f:
-            line = line.strip()
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
             
-            if line.startswith("# ") and not line.startswith("# Rank"):
-                # Save previous method if exists
-                if current_method and current_ranking:
-                    aggregated[current_method] = current_ranking
+            # Check headers
+            if not {'User_ID', 'Movie_ID', 'Estimated_Rating'}.issubset(reader.fieldnames):
+                print("Error: CSV must have columns: User_ID, Movie_ID, Estimated_Rating")
+                sys.exit(1)
+
+            for row in reader:
+                uid = row['User_ID']
+                iid = row['Movie_ID']
+                try:
+                    score = float(row['Estimated_Rating'])
+                except ValueError:
+                    continue 
                 
-                # Start new method
-                current_method = line[2:]  # Remove "# "
-                current_ranking = []
-            
-            elif line and not line.startswith("#"):
-                # Parse ranking line: rank item_id score
-                parts = line.split()
-                if len(parts) >= 2:
-                    item_id = int(parts[1])
-                    current_ranking.append(item_id)
+                user_items[uid].append((iid, score))
+                all_items.add(iid)
+
+    except FileNotFoundError:
+        print(f"Error: File '{filepath}' not found.")
+        sys.exit(1)
         
-        # Save last method
-        if current_method and current_ranking:
-            aggregated[current_method] = current_ranking
+    # Convert to sorted lists of items
+    rankings = []
+    for uid, items_scores in user_items.items():
+        # Sort by score descending
+        items_scores.sort(key=lambda x: x[1], reverse=True)
+        rankings.append([iid for iid, score in items_scores])
     
-    print(f"Loaded {len(aggregated)} aggregation methods")
-    return aggregated
+    print(f"Loaded rankings for {len(rankings)} users.")
+    print(f"Total unique items found: {len(all_items)}")
+    
+    return rankings, all_items
 
 
-def kendall_tau_distance(ranking1, ranking2):
-    """
-    Compute Kendall tau distance between two rankings.
-    
-    This counts the number of pairwise disagreements.
-    Only considers items that appear in both rankings.
-    
-    Returns:
-        distance: Number of discordant pairs
-        normalized_distance: Distance normalized by max possible (n*(n-1)/2)
-        tau: Kendall tau correlation coefficient (-1 to 1)
-    """
-    # Find common items
-    set1 = set(ranking1)
-    set2 = set(ranking2)
-    common = set1 & set2
-    
-    if len(common) < 2:
-        return 0, 0.0, 1.0  # No pairs to compare
-    
-    # Create position maps for common items only
-    pos1 = {item: i for i, item in enumerate(ranking1) if item in common}
-    pos2 = {item: i for i, item in enumerate(ranking2) if item in common}
-    
-    # Get ordered list of common items (by ranking1's order)
-    common_items = [item for item in ranking1 if item in common]
-    n = len(common_items)
-    
-    # Count discordant pairs
-    discordant = 0
-    concordant = 0
-    
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def get_item_scores_from_rankings(rankings, all_items):
+    item_scores = defaultdict(list)
+    for ranking in rankings:
+        n = len(ranking)
+        items_in_ranking = set(ranking)
+        for pos, item in enumerate(ranking):
+            score = 1.0 - (pos / n) if n > 0 else 0
+            item_scores[item].append(score)
+        for item in all_items:
+            if item not in items_in_ranking:
+                item_scores[item].append(0.0)
+    return item_scores
+
+
+# =============================================================================
+# Aggregation Methods
+# =============================================================================
+
+# --- Comb* Family ---
+def comb_min(rankings, all_items):
+    item_scores = get_item_scores_from_rankings(rankings, all_items)
+    scores = {item: min(s_list) for item, s_list in item_scores.items()}
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def comb_max(rankings, all_items):
+    item_scores = get_item_scores_from_rankings(rankings, all_items)
+    scores = {item: max(s_list) for item, s_list in item_scores.items()}
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def comb_sum(rankings, all_items):
+    item_scores = get_item_scores_from_rankings(rankings, all_items)
+    scores = {item: sum(s_list) for item, s_list in item_scores.items()}
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def comb_anz(rankings, all_items):
+    item_scores = get_item_scores_from_rankings(rankings, all_items)
+    scores = {}
+    for item, s_list in item_scores.items():
+        non_zero = [s for s in s_list if s > 0]
+        scores[item] = sum(non_zero) / len(non_zero) if non_zero else 0
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def comb_mnz(rankings, all_items):
+    item_scores = get_item_scores_from_rankings(rankings, all_items)
+    scores = {}
+    for item, s_list in item_scores.items():
+        non_zero = [s for s in s_list if s > 0]
+        scores[item] = sum(non_zero) * len(non_zero)
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+# --- Markov Chains ---
+def build_pairwise_matrix(rankings, all_items, top_k=500):
+    items = list(all_items)
+    n = len(items)
+    item_to_idx = {item: i for i, item in enumerate(items)}
+    pref = np.zeros((n, n))
+    for ranking in rankings:
+        top_items = ranking[:top_k]
+        for i, item_i in enumerate(top_items):
+            idx_i = item_to_idx[item_i]
+            for j in range(i + 1, len(top_items)):
+                item_j = top_items[j]
+                idx_j = item_to_idx[item_j]
+                pref[idx_i][idx_j] += 1
+    return pref, items, item_to_idx
+
+def mc1(rankings, all_items, top_k=500, max_iter=50, tol=1e-6):
+    pref, items, item_to_idx = build_pairwise_matrix(rankings, all_items, top_k)
+    n = len(items)
+    transition = np.zeros((n, n))
     for i in range(n):
-        for j in range(i + 1, n):
-            item_i = common_items[i]
-            item_j = common_items[j]
-            
-            # In ranking1, item_i comes before item_j (by construction)
-            # Check if same order in ranking2
-            if pos2[item_i] < pos2[item_j]:
-                concordant += 1
-            else:
-                discordant += 1
-    
-    total_pairs = n * (n - 1) / 2
-    normalized = discordant / total_pairs if total_pairs > 0 else 0
-    tau = (concordant - discordant) / total_pairs if total_pairs > 0 else 1.0
-    
-    return discordant, normalized, tau
+        winners = [j for j in range(n) if pref[j][i] > 0]
+        if winners:
+            for j in winners:
+                transition[i][j] = 1.0 / len(winners)
+        else:
+            transition[i] = 1.0 / n
+    scores = np.ones(n) / n
+    for _ in range(max_iter):
+        new_scores = transition.T @ scores
+        new_scores /= new_scores.sum()
+        if np.abs(new_scores - scores).max() < tol: break
+        scores = new_scores
+    return sorted([(items[i], scores[i]) for i in range(n)], key=lambda x: -x[1])
+
+def mc2(rankings, all_items, top_k=500, max_iter=50, tol=1e-6):
+    pref, items, item_to_idx = build_pairwise_matrix(rankings, all_items, top_k)
+    n = len(items)
+    transition = np.zeros((n, n))
+    for i in range(n):
+        total = sum(pref[j][i] for j in range(n))
+        if total > 0:
+            for j in range(n):
+                transition[i][j] = pref[j][i] / total
+        else:
+            transition[i] = 1.0 / n
+    scores = np.ones(n) / n
+    for _ in range(max_iter):
+        new_scores = transition.T @ scores
+        new_scores /= new_scores.sum()
+        if np.abs(new_scores - scores).max() < tol: break
+        scores = new_scores
+    return sorted([(items[i], scores[i]) for i in range(n)], key=lambda x: -x[1])
+
+def mc3(rankings, all_items, top_k=500, damping=0.85, max_iter=50, tol=1e-6):
+    pref, items, item_to_idx = build_pairwise_matrix(rankings, all_items, top_k)
+    n = len(items)
+    transition = np.zeros((n, n))
+    for i in range(n):
+        winners = [j for j in range(n) if pref[j][i] > 0]
+        if winners:
+            for j in winners:
+                transition[i][j] = 1.0 / len(winners)
+        else:
+            transition[i] = 1.0 / n
+    transition = damping * transition + (1 - damping) / n
+    scores = np.ones(n) / n
+    for _ in range(max_iter):
+        new_scores = transition.T @ scores
+        new_scores /= new_scores.sum()
+        if np.abs(new_scores - scores).max() < tol: break
+        scores = new_scores
+    return sorted([(items[i], scores[i]) for i in range(n)], key=lambda x: -x[1])
+
+def mc4(rankings, all_items, top_k=500, damping=0.85, max_iter=50, tol=1e-6):
+    pref, items, item_to_idx = build_pairwise_matrix(rankings, all_items, top_k)
+    n = len(items)
+    transition = np.zeros((n, n))
+    for i in range(n):
+        total = sum(pref[j][i] for j in range(n))
+        if total > 0:
+            for j in range(n):
+                transition[i][j] = pref[j][i] / total
+        else:
+            transition[i] = 1.0 / n
+    transition = damping * transition + (1 - damping) / n
+    scores = np.ones(n) / n
+    for _ in range(max_iter):
+        new_scores = transition.T @ scores
+        new_scores /= new_scores.sum()
+        if np.abs(new_scores - scores).max() < tol: break
+        scores = new_scores
+    return sorted([(items[i], scores[i]) for i in range(n)], key=lambda x: -x[1])
+
+# --- Position & Reciprocal ---
+def borda_count(rankings, all_items):
+    scores = defaultdict(float)
+    for ranking in rankings:
+        k = len(ranking)
+        for pos, item in enumerate(ranking):
+            scores[item] += (k - 1 - pos)
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def dowdall(rankings, all_items):
+    scores = defaultdict(float)
+    for ranking in rankings:
+        for pos, item in enumerate(ranking):
+            scores[item] += 1.0 / (pos + 1)
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def median_rank(rankings, all_items):
+    item_ranks = defaultdict(list)
+    for ranking in rankings:
+        rank_dict = {item: pos + 1 for pos, item in enumerate(ranking)}
+        max_rank = len(ranking) + 1
+        for item in all_items:
+            item_ranks[item].append(rank_dict.get(item, max_rank))
+    scores = {item: -np.median(ranks) for item, ranks in item_ranks.items()}
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def mean_rank(rankings, all_items):
+    item_ranks = defaultdict(list)
+    for ranking in rankings:
+        rank_dict = {item: pos + 1 for pos, item in enumerate(ranking)}
+        max_rank = len(ranking) + 1
+        for item in all_items:
+            item_ranks[item].append(rank_dict.get(item, max_rank))
+    scores = {item: -np.mean(ranks) for item, ranks in item_ranks.items()}
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def hpa(rankings, all_items):
+    item_best_rank = {item: float('inf') for item in all_items}
+    for ranking in rankings:
+        for pos, item in enumerate(ranking):
+            rank = pos + 1
+            if rank < item_best_rank[item]:
+                item_best_rank[item] = rank
+    max_r = 1000 
+    scores = {item: max_r - r for item, r in item_best_rank.items()}
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def rrf(rankings, all_items, k=60):
+    scores = defaultdict(float)
+    for ranking in rankings:
+        for pos, item in enumerate(ranking):
+            rank = pos + 1
+            scores[item] += 1.0 / (k + rank)
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def irank(rankings, all_items):
+    scores = defaultdict(float)
+    for ranking in rankings:
+        for pos, item in enumerate(ranking):
+            rank = pos + 1
+            scores[item] += 1.0 / rank
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def er(rankings, all_items):
+    scores = defaultdict(float)
+    for ranking in rankings:
+        for pos, item in enumerate(ranking):
+            rank = pos + 1
+            scores[item] += (1.0 / rank) / rank
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def postndcg(rankings, all_items):
+    scores = defaultdict(float)
+    for ranking in rankings:
+        for pos, item in enumerate(ranking):
+            rank = pos + 1
+            scores[item] += 1.0 / np.log2(rank + 1)
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def cg(rankings, all_items):
+    scores = defaultdict(float)
+    for ranking in rankings:
+        max_pos = len(ranking)
+        for pos, item in enumerate(ranking):
+            relevance = max_pos - pos
+            scores[item] += relevance
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+def dibra(rankings, all_items):
+    items = list(all_items)
+    n_items = len(items)
+    item_ranks = defaultdict(list)
+    for ranking in rankings:
+        rank_dict = {item: pos + 1 for pos, item in enumerate(ranking)}
+        max_rank = len(ranking) + 1
+        for item in all_items:
+            item_ranks[item].append(rank_dict.get(item, max_rank))
+    scores = {item: -np.mean(ranks) for item, ranks in item_ranks.items()}
+    sorted_items = sorted(scores.items(), key=lambda x: -x[1])
+    consensus_rank = {item: pos + 1 for pos, (item, _) in enumerate(sorted_items)}
+    new_scores = defaultdict(float)
+    for ranking in rankings:
+        rank_dict = {item: pos + 1 for pos, item in enumerate(ranking)}
+        max_rank = len(ranking) + 1
+        dist = 0
+        for item in ranking:
+            r1 = rank_dict[item]
+            r2 = consensus_rank.get(item, n_items)
+            dist += (r1 - r2) ** 2
+        weight = 1.0 / (1 + np.sqrt(dist / len(ranking)) + 1e-9)
+        for item in ranking:
+            new_scores[item] += weight * (len(ranking) - rank_dict[item])
+    return sorted(new_scores.items(), key=lambda x: -x[1])
 
 
-def kendall_tau_distance_fast(ranking1, ranking2, max_items=500):
-    """
-    Fast approximation using top-k items only.
-    Uses scipy's kendalltau for efficiency.
-    """
-    # Use only top items for efficiency
-    top1 = ranking1[:max_items]
-    top2 = ranking2[:max_items]
-    
-    # Find common items
-    common = set(top1) & set(top2)
-    
-    if len(common) < 2:
-        return 0, 0.0, 1.0
-    
-    # Create rank vectors for common items
-    pos1 = {item: i for i, item in enumerate(top1) if item in common}
-    pos2 = {item: i for i, item in enumerate(top2) if item in common}
-    
-    common_list = list(common)
-    ranks1 = [pos1[item] for item in common_list]
-    ranks2 = [pos2[item] for item in common_list]
-    
-    # Use scipy's kendalltau (returns tau and p-value)
-    tau, _ = kendalltau(ranks1, ranks2)
-    
-    # Convert tau to distance
-    n = len(common)
-    max_pairs = n * (n - 1) / 2
-    
-    # tau = (concordant - discordant) / total_pairs
-    # So discordant = (1 - tau) * total_pairs / 2
-    normalized_distance = (1 - tau) / 2
-    distance = int(normalized_distance * max_pairs)
-    
-    return distance, normalized_distance, tau
+# =============================================================================
+# Main Execution
+# =============================================================================
 
-
-def evaluate_method(method_name, aggregated_ranking, user_rankings, max_items=500, sample_users=None):
-    """
-    Evaluate a single aggregation method against all user rankings.
-    
-    Returns statistics about Kendall tau distances.
-    """
-    distances = []
-    normalized_distances = []
-    taus = []
-    
-    # Optionally sample users for faster evaluation
-    if sample_users and len(user_rankings) > sample_users:
-        indices = np.random.choice(len(user_rankings), sample_users, replace=False)
-        eval_rankings = [user_rankings[i] for i in indices]
-    else:
-        eval_rankings = user_rankings
-    
-    for user_id, user_ranking in eval_rankings:
-        dist, norm_dist, tau = kendall_tau_distance_fast(
-            aggregated_ranking, user_ranking, max_items
-        )
-        distances.append(dist)
-        normalized_distances.append(norm_dist)
-        taus.append(tau)
-    
-    return {
-        'method': method_name,
-        'mean_distance': np.mean(distances),
-        'std_distance': np.std(distances),
-        'min_distance': np.min(distances),
-        'max_distance': np.max(distances),
-        'mean_normalized': np.mean(normalized_distances),
-        'std_normalized': np.std(normalized_distances),
-        'mean_tau': np.mean(taus),
-        'std_tau': np.std(taus),
-        'n_users': len(eval_rankings)
-    }
-
+ALL_METHODS = {
+    'CombMIN': comb_min, 'CombMAX': comb_max, 'CombSUM': comb_sum,
+    'CombANZ': comb_anz, 'CombMNZ': comb_mnz,
+    'MC1': mc1, 'MC2': mc2, 'MC3': mc3, 'MC4': mc4,
+    'BordaCount': borda_count, 'Dowdall': dowdall,
+    'Median': median_rank, 'Mean': mean_rank,
+    'RRF': rrf, 'iRANK': irank, 'ER': er,
+    'PostNDCG': postndcg, 'CG': cg, 'DIBRA': dibra
+}
 
 def main():
-    parser = argparse.ArgumentParser(description='Evaluate Rank Aggregation Methods')
-    parser.add_argument('--rankings', '-r', default='recommendations.txt',
-                        help='User rankings file')
-    parser.add_argument('--aggregated', '-a', default='aggregated_ranking.txt',
-                        help='Aggregated rankings file')
-    parser.add_argument('--output', '-o', default='evaluation_results.txt',
-                        help='Output file for results')
-    parser.add_argument('--max-items', '-m', type=int, default=500,
-                        help='Max items to consider per ranking (for efficiency)')
-    parser.add_argument('--sample-users', '-s', type=int, default=None,
-                        help='Sample N users for faster evaluation (default: all)')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input', '-i', default='recommendations.csv', help='Input CSV file')
+    # Output is now a directory, not a file
+    parser.add_argument('--outdir', '-o', default='consensus_results', help='Output directory')
+    parser.add_argument('--top-k', '-k', type=int, default=3453, help='Items to save per file')
     args = parser.parse_args()
-    
-    print("=" * 70)
-    print("Evaluating Rank Aggregation Methods - Kendall Tau Distance")
-    print("=" * 70)
-    
-    # Load data
-    user_rankings = load_user_rankings(args.rankings)
-    aggregated = load_aggregated_rankings(args.aggregated)
-    
-    if args.sample_users:
-        print(f"Sampling {args.sample_users} users for evaluation")
-    print(f"Using top {args.max_items} items per ranking")
-    
-    # Evaluate each method
-    results = []
-    print(f"\nEvaluating {len(aggregated)} methods...")
-    
-    for i, (method_name, agg_ranking) in enumerate(aggregated.items(), 1):
-        print(f"  [{i:2d}/{len(aggregated)}] {method_name}...", end=" ", flush=True)
-        start = time.time()
-        
-        stats = evaluate_method(
-            method_name, agg_ranking, user_rankings,
-            max_items=args.max_items,
-            sample_users=args.sample_users
-        )
-        results.append(stats)
-        
-        elapsed = time.time() - start
-        print(f"done ({elapsed:.1f}s)")
-    
-    # Sort results by mean Kendall tau (higher is better = more agreement)
-    results.sort(key=lambda x: -x['mean_tau'])
-    
-    # Save results
-    with open(args.output, 'w') as f:
-        f.write("Rank Aggregation Evaluation - Kendall Tau Distance\n")
-        f.write("=" * 80 + "\n\n")
-        f.write(f"Users evaluated: {results[0]['n_users']}\n")
-        f.write(f"Max items per ranking: {args.max_items}\n\n")
-        
-        f.write("Results (sorted by Mean Tau, higher = better agreement):\n")
-        f.write("-" * 80 + "\n")
-        f.write(f"{'Rank':<5} {'Method':<15} {'Mean Tau':<12} {'Std Tau':<12} {'Mean Norm Dist':<15} {'Std Norm Dist':<15}\n")
-        f.write("-" * 80 + "\n")
-        
-        for rank, stats in enumerate(results, 1):
-            f.write(f"{rank:<5} {stats['method']:<15} {stats['mean_tau']:<12.4f} {stats['std_tau']:<12.4f} "
-                    f"{stats['mean_normalized']:<15.4f} {stats['std_normalized']:<15.4f}\n")
-        
-        f.write("\n\nDetailed Statistics:\n")
-        f.write("-" * 80 + "\n")
-        
-        for stats in results:
-            f.write(f"\n{stats['method']}:\n")
-            f.write(f"  Kendall Tau:        mean={stats['mean_tau']:.4f}, std={stats['std_tau']:.4f}\n")
-            f.write(f"  Normalized Distance: mean={stats['mean_normalized']:.4f}, std={stats['std_normalized']:.4f}\n")
-            f.write(f"  Raw Distance:        mean={stats['mean_distance']:.1f}, std={stats['std_distance']:.1f}, "
-                    f"min={stats['min_distance']:.0f}, max={stats['max_distance']:.0f}\n")
-    
-    print(f"\nResults saved to '{args.output}'")
-    
-    # Display summary
-    print("\n" + "=" * 70)
-    print("Results Summary (sorted by Mean Kendall Tau, higher = better)")
-    print("=" * 70)
-    print(f"{'Rank':<5} {'Method':<15} {'Mean Tau':<12} {'Mean Norm Dist':<15}")
-    print("-" * 50)
-    
-    for rank, stats in enumerate(results, 1):
-        print(f"{rank:<5} {stats['method']:<15} {stats['mean_tau']:<12.4f} {stats['mean_normalized']:<15.4f}")
-    
-    print("\n" + "-" * 50)
-    print("Interpretation:")
-    print("  Tau = 1.0:  Perfect agreement")
-    print("  Tau = 0.0:  Random/no correlation")
-    print("  Tau = -1.0: Perfect disagreement")
-    print("  Norm Dist: 0 = identical, 1 = completely reversed")
 
+    print("=" * 60)
+    print("Rank Aggregation (Separate Output Files)")
+    print("=" * 60)
+
+    # 1. Create Output Directory
+    if not os.path.exists(args.outdir):
+        os.makedirs(args.outdir)
+        print(f"Created directory: {args.outdir}")
+    else:
+        print(f"Using existing directory: {args.outdir}")
+
+    # 2. Load Data
+    rankings, all_items = load_rankings_from_csv(args.input)
+
+    # 3. Process each method and save immediately
+    total = len(ALL_METHODS)
+    print(f"\nProcessing {total} methods...")
+    
+    for i, (name, method) in enumerate(ALL_METHODS.items(), 1):
+        print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
+        
+        # Calculate Ranking
+        result = method(rankings, all_items)
+        
+        # Construct Filename
+        file_name = f"{name}.txt"
+        file_path = os.path.join(args.outdir, file_name)
+        
+        # Write to File
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(f"# Method: {name}\n")
+            f.write(f"# Rank ItemID Score\n")
+            for rank, (item, score) in enumerate(result[:args.top_k], 1):
+                f.write(f"{rank} {item} {score:.6f}\n")
+        
+        print(f"-> Saved to {file_path}")
+
+    print("\n" + "=" * 60)
+    print("Aggregation Complete!")
+    print(f"All files are located in: ./{args.outdir}/")
+    print("=" * 60)
 
 if __name__ == "__main__":
     main()
-
