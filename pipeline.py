@@ -5,6 +5,20 @@ from surprise import accuracy
 from collections import defaultdict
 import numpy as np
 import csv
+import ipdb 
+
+def get_dataframe_from_predictions(predictions):
+    # A list of dictionaries to store prediction details
+    preds_dict = [{
+        'User_ID': pred.uid,
+        'Movie_ID': pred.iid,
+        'actual_rating': pred.r_ui,
+        'Estimated_Rating': pred.est
+    } for pred in predictions]
+
+    # Convert the list of dictionaries to a pandas DataFrame
+    df_predictions = pd.DataFrame(preds_dict)
+    return df_predictions
 
 def calculate_ranking_metrics(predictions, k=10, threshold=4.0):
     """
@@ -79,7 +93,7 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
     """
     print(f"Loading model from {model_path}...")
     _, algo = dump.load(model_path)
-    testset = algo.testset
+    trainset = algo.trainset
     
     # 1. Prepare internal lists to speed up the loop
     all_item_inner_ids = list(testset.all_items())
@@ -159,7 +173,9 @@ def surprise_pipeline():
     # 5. Prediction & Evaluation
     print("Evaluating on Test Set...")
     predictions = algo.test(testset)
-
+    df_predictions = get_dataframe_from_predictions(predictions)
+    df_predictions.to_csv('predictions_test.csv', index=False)
+    
     #Compute recall and ndcg
     k_val = 10
     rel_threshold = 4.0 # Items rated 4 or 5 are considered "Relevant"
@@ -182,5 +198,10 @@ def surprise_pipeline():
     print(f"Final RMSE: {rmse:.4f}")
     print("--- SURPRISE PIPELINE COMPLETE ---")
 
+
+
+
+
+
 surprise_pipeline()
-export_recommendations('./model')
+# export_recommendations('./model')
