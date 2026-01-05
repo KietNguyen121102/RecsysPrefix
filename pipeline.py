@@ -79,11 +79,10 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
     """
     print(f"Loading model from {model_path}...")
     _, algo = dump.load(model_path)
-    trainset = algo.trainset
+    testset = algo.testset
     
     # 1. Prepare internal lists to speed up the loop
-    all_item_inner_ids = list(trainset.all_items())
-    
+    all_item_inner_ids = list(testset.all_items())
     
     print(f"Starting export to {output_file}...")
     
@@ -95,17 +94,17 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
         writer.writerow(['User_ID', 'Movie_ID', 'Estimated_Rating'])
         
         # 3. Iterate over every user in the training set
-        for i, u_inner_id in enumerate(trainset.all_users()):
+        for i, u_inner_id in enumerate(testset.all_users()):
             
             # Progress Logger
             if i % 500 == 0:
-                print(f"  Processed {i}/{trainset.n_users} users...")
+                print(f"  Processed {i}/{testset.n_users} users...")
             
             # Get the Raw User ID (for the file)
-            u_raw_id = trainset.to_raw_uid(u_inner_id)
+            u_raw_id = testset.to_raw_uid(u_inner_id)
             
             # Identify items user has already rated (to exclude them)
-            user_rated_inner_ids = set(item_idx for (item_idx, _) in trainset.ur[u_inner_id])
+            user_rated_inner_ids = set(item_idx for (item_idx, _) in testset.ur[u_inner_id])
 
             
             user_predictions = []
@@ -123,7 +122,7 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
             
             # 6. Write to file immediately
             for i_inner_id, score in top_recs:
-                i_raw_id = trainset.to_raw_iid(i_inner_id)
+                i_raw_id = testset.to_raw_iid(i_inner_id)
                 writer.writerow([u_raw_id, i_raw_id, round(score, 4)])
 
     print("--- Export Complete ---")
