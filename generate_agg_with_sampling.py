@@ -7,6 +7,7 @@ import sys
 from tqdm import tqdm 
 import ipdb 
 import pandas as pd 
+import pickle 
 
 from utils.aggregation_methods import * 
 # =============================================================================
@@ -176,7 +177,7 @@ def main():
         print(f"Using existing directory: {args.outdir}")
 
     # 2. Load Data
-    ipdb.set_trace() 
+    # ipdb.set_trace() 
     rankings, all_items = load_rankings_to_df(args.input) #load_rankings_to_list(args.input)
     
     # 3. Generate Sample Sets
@@ -187,6 +188,11 @@ def main():
     for seed in range(args.n_samples):
         os.makedirs(os.path.join(args.outdir, f"sample_{seed}"), exist_ok=True)
         args.outdir = os.path.join(args.outdir, f"sample_{seed}")
+        
+        pickle.dump(sampled_rankings[seed], open(os.path.join(args.outdir, "sampled_rankings.pkl"), 'wb'))
+        pickle.dump(sampled_items[seed], open(os.path.join(args.outdir, "sampled_items.pkl"), 'wb'))
+        pickle.dump(sampled_users[seed], open(os.path.join(args.outdir, "sampled_users.pkl"), 'wb'))
+        
         total = len(ALL_METHODS)
         print(f"\nProcessing {total} methods...")
         
