@@ -6,13 +6,14 @@ import argparse
 import sys
 from tqdm import tqdm 
 import ipdb 
+import pandas as pd 
 
 from utils.aggregation_methods import * 
 # =============================================================================
 # Data Loading
 # =============================================================================
 
-def load_rankings_from_csv(filepath="recommendations.csv"):
+def load_rankings_to_list(filepath="recommendations.csv"):
     """
     Load recommendations from CSV file.
     Expected Format: User_ID,Movie_ID,Estimated_Rating
@@ -58,25 +59,85 @@ def load_rankings_from_csv(filepath="recommendations.csv"):
     
     return rankings, all_items
 
+def load_rankings_to_df(filepath="recommendations.csv"):
+    """
+    Load recommendations from CSV into Pandas.
+
+    Expected columns:
+      - User_ID
+      - Movie_ID
+      - Estimated_Rating
+
+    Returns:
+      rankings_df: DataFrame with columns [User_ID, Ranked_Items]
+                   Ranked_Items is a list sorted by Estimated_Rating desc
+      all_items: set of unique Movie_IDs
+      long_df: cleaned long-form DataFrame
+               columns [User_ID, Movie_ID, Estimated_Rating]
+    """
+    print(f"Loading data from '{filepath}'...")
+
+    try:
+        df = pd.read_csv(filepath)
+    except FileNotFoundError:
+        print(f"Error: File '{filepath}' not found.")
+        sys.exit(1)
+
+    required = {"User_ID", "Movie_ID", "Estimated_Rating"}
+    if not required.issubset(df.columns):
+        print("Error: CSV must have columns: User_ID, Movie_ID, Estimated_Rating")
+        sys.exit(1)
+
+    # Coerce rating to numeric, drop bad rows
+    df["Estimated_Rating"] = pd.to_numeric(df["Estimated_Rating"], errors="coerce")
+    df = df.dropna(subset=["Estimated_Rating"])
+
+    # Sort by user, then rating descending
+    df = df.sort_values(["User_ID", "Estimated_Rating"], ascending=[True, False])
+
+    # Build rankings per user
+    rankings_df = (
+        df.groupby("User_ID")["Movie_ID"]
+          .apply(list)
+          .reset_index(name="Ranked_Items")
+    )
+
+    all_items = set(df["Movie_ID"].unique())
+
+    print(f"Loaded rankings for {len(rankings_df)} users.")
+    print(f"Total unique items found: {len(all_items)}")
+
+    return rankings_df, all_items
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
+def format_sampled_rankings(sampled_preferences):
+    """
+    Convert sampled preferences DataFrame to list of rankings.
+    """
+    rankings = []
+    for _, row in sampled_preferences.iterrows():
+        rankings.append(row['Ranked_Items'])
+    return rankings
 
 # =============================================================================
 # Sampling Logic
 # =============================================================================
 
-def generate_sample_sets(n_samples, n_users, n_items, preferences): 
+def generate_sample_sets(n_samples, n_users, n_items, all_items, preferences): 
     all_users = list(preferences['User_ID'].unique())
-    all_items = list(preferences['Movie_ID'].unique())
-    slices = [] 
+    dfs, items, users = [], [], []
     for seed in range(n_samples):
         user_idx = np.random.choice(len(all_users), size=n_users, replace=False)
         item_idx = np.random.choice(len(all_items), size=n_items, replace=False)
-        sampled_pref = preferences[preferences['User_ID'].isin([all_users[i] for i in user_idx]) & preferences['Movie_ID'].isin([all_items[i] for i in item_idx])]
-        slices.append(sampled_pref)
-    return slices  
+        sampled_pref = preferences[preferences['User_ID'].isin([all_users[i] for i in user_idx])]
+        sampled_pref['Ranked_Items'] = sampled_pref['Ranked_Items'].apply(lambda x: [item for item in x if item in item_idx])
+        dfs.append(sampled_pref)
+        items.append(item_idx)
+        users.append(user_idx)
+    return dfs, items, users
 
 
 # =============================================================================
@@ -98,9 +159,9 @@ def main():
     parser.add_argument('--input', '-i', default='recommendations.csv', help='Input CSV file')
     parser.add_argument('--outdir', '-o', default='consensus_results', help='Output directory')
     parser.add_argument('--top-k', '-k', type=int, default=3453, help='Items to save per file')
-    parser.add_argument('--user-sample-size', '-us', type=int, default=100, help='Number of usersto sample')
-    parser.add_argument('--item-sample-size', '-is', type=int, default=100, help='Number of usersto sample')
-    parser.add_argument('--n-samples', '-n', type=int, default=10, help='Number of samples to generate')
+    parser.add_argument('--user-sample-size', '-us', type=int, default=10, help='Number of users to sample')
+    parser.add_argument('--item-sample-size', '-is', type=int, default=30, help='Number of items to sample')
+    parser.add_argument('--n-samples', '-n', type=int, default=1, help='Number of samples to generate')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -116,35 +177,42 @@ def main():
 
     # 2. Load Data
     ipdb.set_trace() 
-    rankings, all_items = load_rankings_from_csv(args.input)
-
-    # 3. Process each method and save immediately
-    total = len(ALL_METHODS)
-    print(f"\nProcessing {total} methods...")
+    rankings, all_items = load_rankings_to_df(args.input) #load_rankings_to_list(args.input)
     
-    for i, (name, method) in enumerate(ALL_METHODS.items(), 1):
-        print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
+    # 3. Generate Sample Sets
+    sampled_rankings, sampled_items, sampled_users = generate_sample_sets(n_samples=args.n_samples, n_users=args.user_sample_size, n_items=args.item_sample_size, all_items=list(all_items), preferences=rankings)
+    sampled_rankings  = [format_sampled_rankings(sampled_ranking) for sampled_ranking in sampled_rankings]
+    
+    # 3. Process each method and save immediately
+    for seed in range(args.n_samples):
+        os.makedirs(os.path.join(args.outdir, f"sample_{seed}"), exist_ok=True)
+        args.outdir = os.path.join(args.outdir, f"sample_{seed}")
+        total = len(ALL_METHODS)
+        print(f"\nProcessing {total} methods...")
         
-        # Calculate Ranking
-        result = method(rankings, all_items)
-        
-        # Construct Filename
-        file_name = f"{name}.txt"
-        file_path = os.path.join(args.outdir, file_name)
-        
-        # Write to File
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(f"# Method: {name}\n")
-            f.write(f"# Rank ItemID Score\n")
-            for rank, (item, score) in enumerate(result[:args.top_k], 1):
-                f.write(f"{rank} {item} {score:.6f}\n")
-        
-        print(f"-> Saved to {file_path}")
+        for i, (name, method) in enumerate(ALL_METHODS.items(), 1):
+            print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
+            
+            # Calculate Ranking
+            result = method(sampled_rankings[seed], sampled_items[seed])
+            
+            # Construct Filename
+            file_name = f"{name}.txt"
+            file_path = os.path.join(args.outdir, file_name)
+            
+            # Write to File
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(f"# Method: {name}\n")
+                f.write(f"# Rank ItemID Score\n")
+                for rank, (item, score) in enumerate(result[:args.top_k], 1):
+                    f.write(f"{rank} {item} {score:.6f}\n")
+            
+            print(f"-> Saved to {file_path}")
 
-    print("\n" + "=" * 60)
-    print("Aggregation Complete!")
-    print(f"All files are located in: ./{args.outdir}/")
-    print("=" * 60)
+        print("\n" + "=" * 60)
+        print("Aggregation Complete!")
+        print(f"All files are located in: ./{args.outdir}/")
+        print("=" * 60)
 
 if __name__ == "__main__":
     main()
