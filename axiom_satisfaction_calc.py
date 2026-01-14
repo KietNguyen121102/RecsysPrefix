@@ -111,6 +111,10 @@ def EJR_check_satisfaction_given_committee(proposed_committee, partial_lists):
                 return False
     return True
 
+
+def generate_samples(): 
+    return 0 
+
 # =============================================================================
 # 3. Main Pipeline
 # =============================================================================
@@ -127,7 +131,6 @@ def main():
     print("-" * 70)
     
     # 1. Load User-Level Fully Ordered Preference Lists Data
-    # ipdb.set_trace() 
     preferences = pd.read_csv(args.pref)
     approvals = preferences[preferences['Estimated_Rating'] >= 4].reset_index(drop=True)  # assuming ratings are from 1 to 5
     number_voters = len(approvals['User_ID'].unique())
