@@ -14,7 +14,7 @@ def read_edgelist_from_csv(path):
     V = set()
     edges = set()
     voters = df['User_ID'].apply(lambda x: f"V_{x}")
-    candidates = df['Movie_ID'].apply(lambda x: f"C_{x}")
+    candidates = df['Ranked_Items'].apply(lambda x: f"C_{x}")
     for i in range(len(voters)):
         # Prefix to disambiguate sides
         u = voters.iloc[i]
@@ -30,7 +30,7 @@ def read_edgelist_from_df(df):
     V = set()
     edges = set()
     voters = df['User_ID'].apply(lambda x: f"V_{x}")
-    candidates = df['Movie_ID'].apply(lambda x: f"C_{x}")
+    candidates = df['Ranked_Items'].apply(lambda x: f"C_{x}")
     with tqdm(total=len(voters), desc="Reading edgelist") as pbar:
         for i in range(len(voters)):
             # Prefix to disambiguate sides

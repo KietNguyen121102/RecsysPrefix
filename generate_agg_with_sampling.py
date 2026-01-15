@@ -182,7 +182,7 @@ def main():
     
     # 3. Generate Sample Sets
     sampled_rankings, sampled_items, sampled_users = generate_sample_sets(n_samples=args.n_samples, n_users=args.user_sample_size, n_items=args.item_sample_size, all_items=list(all_items), preferences=rankings)
-    sampled_rankings  = [format_sampled_rankings(sampled_ranking) for sampled_ranking in sampled_rankings]
+    formatted_sampled_rankings  = [format_sampled_rankings(sampled_ranking) for sampled_ranking in sampled_rankings]
     
     # 3. Process each method and save immediately
     for seed in range(args.n_samples):
@@ -200,7 +200,7 @@ def main():
             print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
             
             # Calculate Ranking
-            result = method(sampled_rankings[seed], sampled_items[seed])
+            result = method(formatted_sampled_rankings[seed], sampled_items[seed])
             
             # Construct Filename
             file_name = f"{name}.txt"
