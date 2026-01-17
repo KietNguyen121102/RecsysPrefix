@@ -60,7 +60,7 @@ def load_sampled_preferences(file_path):
     Loads sampled user preferences from a CSV file.
     Expects columns: User_ID, Movie_ID, Estimated_Rating
     """
-    ipdb.set_trace() 
+    # ipdb.set_trace() 
     preferences = pickle.load(open(file_path, 'rb')) #.explode('Ranked_Items').reset_index(drop=True)
     return preferences
 # =============================================================================
@@ -94,24 +94,28 @@ def main():
 
     
     # print(f"(2) Running Preprocessing")
-    # print("-" * 70)
+    print("-" * 70)
+    print('RUN STATS')
+    print("-" * 70)
+    print("Number of Voters:", number_voters)
+    print("Number of Candidates:", number_candidates)
+    print("Number of methods to evaluate:", len(consensus_files))
+    print("-" * 70)
     
     print(f"(4) Calculating Axiom Satisfaction")
     results = []
     # 4. Iterate over each method
-    for file_path in consensus_files[:1]:
+    for idx, file_path in enumerate(consensus_files):
         satisfaction = {}
         method_name = os.path.splitext(os.path.basename(file_path))[0]
-        print("Method:", method_name)
+        print(f"({idx}/{len(consensus_files)}) Method:", method_name)
+        
         # Load the ranking
         committee = load_consensus_ranking(file_path)
-        if args.committee_size < len(committee):
-            committee = committee[:args.committee_size]
         if not committee:
             continue
-            
-        for prefix_idx in range(len(committee)):
-            # preferences_at_prefix = preferences['Ranked_Items'].apply(lambda x: x[:prefix_idx + 1]).explode('Ranked_Items')
+        
+        for prefix_idx in tqdm(range(len(committee))):
             preferences_at_prefix = (
                     preferences
                     .assign(Ranked_Items=lambda df:
@@ -119,30 +123,64 @@ def main():
                     .explode('Ranked_Items')
                     .reset_index(drop=True)
                 )
-            
+            # ipdb.set_trace()
             # Calculate Satisfaction Over Axioms
             # user_to_set, movie_to_users, n_users, all_candidates = preprocess_for_JR(preferences)
-            voter_sets, candidate_sets, l_cohesive = find_all_cohesive_groups(preferences_at_prefix, committee_size=args.committee_size, number_voters=number_voters)
+            voter_sets, candidate_sets, l_cohesive = find_all_cohesive_groups(preferences_at_prefix, committee_size=prefix_idx+1, number_voters=number_voters)
     
-            satisfaction['JR'] = JR_check_satisfaction_given_committee(committee, partial_lists=preferences_at_prefix, all_candidates=all_candidates, n=number_voters, k=args.committee_size)
+            satisfaction['JR'] = JR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, all_candidates=all_candidates, n=number_voters, k=prefix_idx+1)
+            satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
+            satisfaction['EJR'] = EJR_check_satisfaction_given_committee(committee[:prefix_idx+1], preferences_at_prefix) 
             
-            #JR_check_satisfaction_given_committee(committee, user_to_set=user_to_set, movie_to_users=movie_to_users, n_users=n_users)
-            satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee, partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
-            satisfaction['EJR'] = EJR_check_satisfaction_given_committee(committee, preferences_at_prefix) 
-            
-        print(f"Satisfaction: {satisfaction}")
+        # print(f"Satisfaction: {satisfaction}")
         results.append((method_name, satisfaction))
-
     # 5. Print Table
     print("\n" + "=" * 60)
     print(f"{'Method':<20} | {'JR':^5} | {'PJR':^5} | {'EJR':^5}")
     print("-" * 60)
 
-    for method, jr, pjr, ejr in results:
+    for method, satisfaction in results:
+        jr, pjr, ejr = satisfaction['JR'], satisfaction['PJR'], satisfaction['EJR']
         def mark(x): return "✓" if x else "✗"
         print(f"{method:<20} | {mark(jr):^5} | {mark(pjr):^5} | {mark(ejr):^5}")
 
     print("=" * 60)
+    pickle.dump(results, open(f'{args.agg}/axiom_satisfaction_results.pkl', 'wb')) 
+
+def test(): 
+    pref_path = '/u/rsalgani/2024-2025/RecsysPrefix/consensus_results/sample_0/sampled_rankings.pkl'
+    agg_path = '/u/rsalgani/2024-2025/RecsysPrefix/consensus_results/sample_0/MC1.txt'
+    preferences = load_sampled_preferences(pref_path)
+    committee = load_consensus_ranking(agg_path)
+    number_voters = len(preferences['User_ID'].unique())
+    all_candidates = preferences.explode('Ranked_Items')['Ranked_Items'].unique()
+    number_candidates = len(all_candidates)
+    satisfaction = {}
     
+    vidx_to_int = {vidx: i for i, vidx in enumerate(preferences['User_ID'].unique())}
+    cidx_to_int = {cidx: i for i, cidx in enumerate(all_candidates)}
+    
+    preferences['User_ID'] = preferences['User_ID'].map(vidx_to_int)
+    preferences['Ranked_Items'] = preferences['Ranked_Items'].apply(lambda x: [cidx_to_int[c] for c in x])
+    committee = [cidx_to_int[c] for c in committee if c in cidx_to_int]
+    for prefix_idx in tqdm(range(len(committee))):
+        preferences_at_prefix = (
+                preferences
+                .assign(Ranked_Items=lambda df:
+                        df['Ranked_Items'].apply(lambda x: x[:prefix_idx + 1]))
+                .explode('Ranked_Items')
+                .reset_index(drop=True)
+            )
+        ipdb.set_trace()
+        # Calculate Satisfaction Over Axioms
+        # user_to_set, movie_to_users, n_users, all_candidates = preprocess_for_JR(preferences)
+        voter_sets, candidate_sets, l_cohesive = find_all_cohesive_groups(preferences_at_prefix, committee_size=prefix_idx+1, number_voters=number_voters)
+        satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
+        print(satisfaction['PJR'])
+    
+    
+        
+        
 if __name__ == "__main__":
-    main()
+    # main()
+    test() 

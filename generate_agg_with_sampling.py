@@ -9,7 +9,9 @@ import ipdb
 import pandas as pd 
 import pickle 
 
-from utils.aggregation_methods import * 
+from utils.vanilla_aggregation_methods import * 
+from utils.fair_aggregation_methods import *
+
 # =============================================================================
 # Data Loading
 # =============================================================================
@@ -145,7 +147,7 @@ def generate_sample_sets(n_samples, n_users, n_items, all_items, preferences):
 # Main Execution
 # =============================================================================
 
-ALL_METHODS = {
+VANILLA_METHODS = {
     'CombMIN': comb_min, 'CombMAX': comb_max, 'CombSUM': comb_sum,
     'CombANZ': comb_anz, 'CombMNZ': comb_mnz,
     'MC1': mc1, 'MC2': mc2, 'MC3': mc3, 'MC4': mc4,
@@ -155,13 +157,17 @@ ALL_METHODS = {
     'PostNDCG': postndcg, 'CG': cg, 'DIBRA': dibra
 }
 
+FAIR_METHODS = { 'KuhlmanConsensus': Consensus,
+                'FairMedian': FairILP, 
+                }
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', '-i', default='recommendations.csv', help='Input CSV file')
     parser.add_argument('--outdir', '-o', default='consensus_results', help='Output directory')
+    parser.add_argument('--group-file', '-g', default='data/ml-1m/item_groups.pkl', help='Group attributes CSV file')
     parser.add_argument('--top-k', '-k', type=int, default=3453, help='Items to save per file')
     parser.add_argument('--user-sample-size', '-us', type=int, default=10, help='Number of users to sample')
-    parser.add_argument('--item-sample-size', '-is', type=int, default=30, help='Number of items to sample')
+    parser.add_argument('--item-sample-size', '-is', type=int, default=20, help='Number of items to sample')
     parser.add_argument('--n-samples', '-n', type=int, default=1, help='Number of samples to generate')
     args = parser.parse_args()
 
@@ -179,6 +185,7 @@ def main():
     # 2. Load Data
     # ipdb.set_trace() 
     rankings, all_items = load_rankings_to_df(args.input) #load_rankings_to_list(args.input)
+    group_df = pickle.load(open(args.group_file, 'rb'))
     
     # 3. Generate Sample Sets
     sampled_rankings, sampled_items, sampled_users = generate_sample_sets(n_samples=args.n_samples, n_users=args.user_sample_size, n_items=args.item_sample_size, all_items=list(all_items), preferences=rankings)
@@ -187,33 +194,55 @@ def main():
     # 3. Process each method and save immediately
     for seed in range(args.n_samples):
         os.makedirs(os.path.join(args.outdir, f"sample_{seed}"), exist_ok=True)
-        args.outdir = os.path.join(args.outdir, f"sample_{seed}")
+        write_dir = os.path.join(args.outdir, f"sample_{seed}")
         
-        pickle.dump(sampled_rankings[seed], open(os.path.join(args.outdir, "sampled_rankings.pkl"), 'wb'))
-        pickle.dump(sampled_items[seed], open(os.path.join(args.outdir, "sampled_items.pkl"), 'wb'))
-        pickle.dump(sampled_users[seed], open(os.path.join(args.outdir, "sampled_users.pkl"), 'wb'))
+        pickle.dump(sampled_rankings[seed], open(os.path.join(write_dir, "sampled_rankings.pkl"), 'wb'))
+        pickle.dump(sampled_items[seed], open(os.path.join(write_dir, "sampled_items.pkl"), 'wb'))
+        pickle.dump(sampled_users[seed], open(os.path.join(write_dir, "sampled_users.pkl"), 'wb'))
         
-        total = len(ALL_METHODS)
+        total = len(VANILLA_METHODS) + len(FAIR_METHODS)
         print(f"\nProcessing {total} methods...")
         
-        for i, (name, method) in enumerate(ALL_METHODS.items(), 1):
+        for i, (name, method) in enumerate(VANILLA_METHODS.items(), 1):
             print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
             
             # Calculate Ranking
             result = method(formatted_sampled_rankings[seed], sampled_items[seed])
-            
+            # ipdb.set_trace() 
             # Construct Filename
             file_name = f"{name}.txt"
-            file_path = os.path.join(args.outdir, file_name)
+            file_path = os.path.join(write_dir, file_name)
             
             # Write to File
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(f"# Method: {name}\n")
                 f.write(f"# Rank ItemID Score\n")
-                for rank, (item, score) in enumerate(result[:args.top_k], 1):
+                for rank, (item, score) in enumerate(result, 1):
                     f.write(f"{rank} {item} {score:.6f}\n")
             
             print(f"-> Saved to {file_path}")
+            
+        alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes = process_for_fair_ranking(sampled_items[seed], group_df, formatted_sampled_rankings[seed])
+        for i, (name, method) in enumerate(FAIR_METHODS.items(), len(VANILLA_METHODS)+1):
+            print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
+            
+            # Calculate Ranking
+            result = method(alphas, betas, ranks_for_fairness, attributes_map, num_attributes)
+            result = [idx_to_item[i] for i in result]
+            # ipdb.set_trace() 
+            # Construct Filename
+            file_name = f"{name}.txt"
+            file_path = os.path.join(write_dir, file_name)
+            
+            # Write to File
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(f"# Method: {name}\n")
+                # f.write(f"# Rank ItemID Score\n")
+                for rank, item, in enumerate(result, 1):
+                    f.write(f"{rank} {item}\n")
+            
+            print(f"-> Saved to {file_path}")
+
 
         print("\n" + "=" * 60)
         print("Aggregation Complete!")

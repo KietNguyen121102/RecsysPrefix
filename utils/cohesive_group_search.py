@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from itertools import permutations, combinations
 from tqdm import tqdm 
+import math 
 
 def read_edgelist_from_csv(path):
     df = pd.read_csv(path)
@@ -31,15 +32,15 @@ def read_edgelist_from_df(df):
     edges = set()
     voters = df['User_ID'].apply(lambda x: f"V_{x}")
     candidates = df['Ranked_Items'].apply(lambda x: f"C_{x}")
-    with tqdm(total=len(voters), desc="Reading edgelist") as pbar:
-        for i in range(len(voters)):
-            # Prefix to disambiguate sides
-            u = voters.iloc[i]
-            v = candidates.iloc[i]
-            U.add(u)
-            V.add(v)
-            edges.add((u, v))
-            pbar.update(1)
+    # with tqdm(total=len(voters), desc="Reading edgelist") as pbar:
+    for i in range(len(voters)):
+        # Prefix to disambiguate sides
+        u = voters.iloc[i]
+        v = candidates.iloc[i]
+        U.add(u)
+        V.add(v)
+        edges.add((u, v))
+            # pbar.update(1)
     return U, V, edges
 
 
@@ -56,24 +57,24 @@ def build_clique_extended_graph(U, V, edges):
     Returns: dict node -> set(neighbors)
     """
     GC = dict()
-    with tqdm(total=len(U), desc="Building GC adjacency") as pbar:
-        for u in U:
-            # neighbors = all other U plus neighbors in V from edges
-            neighbors = set(U)
-            neighbors.remove(u)
-            # add actual neighbors in V
-            for (_, v) in filter(lambda e: e[0] == u, edges):
-                neighbors.add(v)
-            GC[u] = neighbors
-            pbar.update(1)
+    # with tqdm(total=len(U), desc="Building GC adjacency") as pbar:
+    for u in U:
+        # neighbors = all other U plus neighbors in V from edges
+        neighbors = set(U)
+        neighbors.remove(u)
+        # add actual neighbors in V
+        for (_, v) in filter(lambda e: e[0] == u, edges):
+            neighbors.add(v)
+        GC[u] = neighbors
+            # pbar.update(1)
     # For speed, build mapping from u->list of v neighbors (to avoid many filters)
     neighU = defaultdict(set)
     neighV = defaultdict(set)
-    with tqdm(total=len(edges), desc="Adding GC neighbor edges") as pbar:
-        for u, v in edges:
-            neighU[u].add(v)
-            neighV[v].add(u)
-            pbar.update(1)
+    # with tqdm(total=len(edges), desc="Adding GC neighbor edges") as pbar:
+    for u, v in edges:
+        neighU[u].add(v)
+        neighV[v].add(u)
+        # pbar.update(1)
     # recompute with these
     for u in U:
         GC[u] = (set(U) - {u}) | neighU[u]
@@ -163,60 +164,63 @@ def maximal_bicliques_from_gc(GC_adj, Uset, Vset):
     # process nodes according to degeneracy order: for each v, compute P = N(v) ∩ later_nodes
     nodes_pos = {node: i for i, node in enumerate(order)}
     # We'll process nodes in 'order' (which is reversed degeneracy)
-    with tqdm(total=len(order), desc="Finding maximal bicliques") as pbar:
-        for v in order:
-            N_v = GC_adj[v]
-            # P = neighbors of v that come after v in the order
-            P = {w for w in N_v if nodes_pos[w] > nodes_pos[v]}
-            X = {w for w in N_v if nodes_pos[w] < nodes_pos[v]}
-            R = {v}
+    # with tqdm(total=len(order), desc="Finding maximal bicliques") as pbar:
+    for v in order:
+        N_v = GC_adj[v]
+        # P = neighbors of v that come after v in the order
+        P = {w for w in N_v if nodes_pos[w] > nodes_pos[v]}
+        X = {w for w in N_v if nodes_pos[w] < nodes_pos[v]}
+        R = {v}
 
-            def cb(Rclique):
-                # convert clique to biclique: split into U and V parts
-                CU = set([int(x.strip('V_')) for x in Rclique if x in Uset])
-                CV = set([int(x.strip('C_')) for x in Rclique if x in Vset])
-                # According to theorem, both sets are non-empty for relevant bicliques
-                if CU and CV:
-                    # out_writer(CU, CV)
-                    final_voters.append(CU)
-                    final_candidates.append(CV)
+        def cb(Rclique):
+            # convert clique to biclique: split into U and V parts
+            CU = set([int(x.strip('V_')) for x in Rclique if x in Uset])
+            CV = set([int(x.strip('C_')) for x in Rclique if x in Vset])
+            # According to theorem, both sets are non-empty for relevant bicliques
+            if CU and CV:
+                # out_writer(CU, CV)
+                final_voters.append(CU)
+                final_candidates.append(CV)
 
-            bron_kerbosch_pivot(GC_adj, R, P, X, cb)
-            pbar.update(1)
+        bron_kerbosch_pivot(GC_adj, R, P, X, cb)
+            # pbar.update(1)
     return final_voters, final_candidates
 
 
-def add_subsets(voter_sets, candidate_sets, committee_size, number_voters):
-    l_cohesive = {}
-    for l in range(1, committee_size+1):
-        augmented_candidate_sets = []
-        augmented_voter_sets = []
-        for set_idx in range(len(candidate_sets)):
-            c_set_size = len(candidate_sets[set_idx])
-            v_set_size = len(voter_sets[set_idx])
-            if v_set_size == 1: 
-                continue 
-            augmented_candidate_sets.append(candidate_sets[set_idx])
-            augmented_voter_sets.append(voter_sets[set_idx])
-            if c_set_size >= l and v_set_size >= (l*number_voters)/committee_size:
-                voter_permutations = list(
-                    combinations(voter_sets[set_idx], r=l))
-                candidate_permutations = [
-                    candidate_sets[set_idx]] * len(voter_permutations)
-                augmented_candidate_sets.extend(candidate_permutations)
-                augmented_voter_sets.extend(voter_permutations)
-        augmented_voter_sets = [list(s) for s in augmented_voter_sets]
-        augmented_candidate_sets = [list(s) for s in augmented_candidate_sets]
-        l_cohesive[l] = {'voter_sets': augmented_voter_sets,
-                         'candidate_sets': augmented_candidate_sets}
+def add_subsets(voter_sets, candidate_sets, k, n):
+    cohesive_voter_blocks = []
+    cohesive_candidate_blocks = []
+    l_cohesive = {} 
+    for l in range(1, k+1):
+        final_candidate_sets = []
+        final_voter_sets = []
+        for i in range(len(candidate_sets)):
+            if len(candidate_sets[i]) >= l and len(voter_sets[i]) >= (l*n)/k:
+                final_candidate_sets.append(candidate_sets[i])
+                final_voter_sets.append(voter_sets[i])
+                
+                #Just for testing
+                cohesive_voter_blocks.append(voter_sets[i])
+                cohesive_candidate_blocks.append(candidate_sets[i])
+                
+                voter_subsets = list(
+                    combinations(voter_sets[i], r=int(math.ceil((l*n)/k)) ))
+                
+                final_voter_sets.extend(voter_subsets)
+                final_candidate_sets.extend([candidate_sets[i]] * len(voter_subsets))
+        final_voter_sets = [list(s) for s in final_voter_sets]
+        final_candidate_sets = [list(s) for s in final_candidate_sets]
+        l_cohesive[l] = {'voter_sets': final_voter_sets,
+                         'candidate_sets': final_candidate_sets}
+    # print(cohesive_voter_blocks, cohesive_candidate_blocks)
     return l_cohesive
 
 
 def find_maximal_cohesive_groups(partial_lists, committee_size):
     U, V, edges = read_edgelist_from_df(partial_lists)
-    print('Building clique-extended graph...')
+    # print('Building clique-extended graph...')
     GC = build_clique_extended_graph(U, V, edges)
-    print('Finding maximal bicliques via GC...')
+    # print('Finding maximal bicliques via GC...')
     voter_sets, candidate_sets = maximal_bicliques_from_gc(GC, U, V)
     return voter_sets, candidate_sets
 
@@ -224,11 +228,9 @@ def find_maximal_cohesive_groups(partial_lists, committee_size):
 def find_all_cohesive_groups(partial_lists, committee_size, number_voters):
     U, V, edges = read_edgelist_from_df(partial_lists)
     GC = build_clique_extended_graph(U, V, edges)
-    voter_sets, candidate_sets = maximal_bicliques_from_gc(GC, U, V)
+    voter_sets, candidate_sets = maximal_bicliques_from_gc(GC, U, V) 
     l_cohesive = add_subsets(voter_sets, candidate_sets,
                              committee_size, number_voters)
     return voter_sets, candidate_sets, l_cohesive
-
-
 
 
