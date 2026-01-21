@@ -196,8 +196,8 @@ def add_subsets(voter_sets, candidate_sets, k, n):
         final_voter_sets = []
         for i in range(len(candidate_sets)):
             if len(candidate_sets[i]) >= l and len(voter_sets[i]) >= (l*n)/k:
-                final_candidate_sets.append(candidate_sets[i])
-                final_voter_sets.append(voter_sets[i])
+                # final_candidate_sets.append(candidate_sets[i])
+                # final_voter_sets.append(voter_sets[i])
                 
                 #Just for testing
                 cohesive_voter_blocks.append(voter_sets[i])
