@@ -39,10 +39,71 @@ def ilp(borda_ranking, l_cohesive):
         alts = l_cohesive['candidate_sets']
         cohesive_k = cohesive_groups[k]
         alts_k = alts[k]
-        constraints.append()
+        constraints.append(cp.sum([x[c, p] for c in alts_k for p in range(k)]) >= 1)
+
+    objective_terms = []
+
+    for c in range(n):
+        for d in range(n):
+            if c != d:
+                if borda_dict[d] < borda_dict[c]:
+                    objective_terms.append(y[c,d])
+    
+    objective = cp.Minimize(cp.sum(objective_terms))
+
+    # solving ilp
+    problem = cp.Problem(objective, constraints)
+    problem.solve(solver=cp.GUROBI, verbose=False)
+    
+    if problem.status not in ["optimal", "optimal_inaccurate"]:
+        problem.solve(solver=cp.CBC, verbose=False)
+    
+    if problem.status not in ["optimal", "optimal_inaccurate"]:
+        raise ValueError(f"Optimization failed with status: {problem.status}")
+    
+   # output ranking
+    x_sol = x.value
+    ranking = [0] * n
+    for c in range(n):
+        for p in range(n):
+            if x_sol[c, p] > 0.5:  
+                ranking[p] = c
+                break
+    
+    return ranking, problem.value
 
 
 # usage:
 # get all cohesive groups 
 # run ilp, include it in the evaluation pipeline 
 # -> sanity check: must satisfy JR always. otherwise something is very wrong
+
+if __name__ == "__main__":
+    num_candidates = 5
+    borda_ranking = [2, 1, 4, 3, 5]
+    # dict should be {0: 2, 1: 1, 2: 4, 3: 3, 4: 5}
+    
+    # Two cohesive groups
+    l_cohesive = {1: {'voter_sets': [],
+                         'candidate_sets': []}}
+    
+    ranking, obj_value = ilp(
+        borda_ranking, l_cohesive, num_candidates
+    )
+    
+    print("Borda ranking order (best to worst):")
+    print(f"  {borda_ranking}")
+
+    
+    print(f"\nPrefix-JR constrained ranking (best to worst):")
+    print(f"  {ranking}")
+    
+    print(f"\nNumber of disagreements with Borda: {obj_value}")
+    
+    # Verify prefix-JR constraints
+    print("\nPrefix-JR verification:")
+    for k in range(1, num_candidates + 1):
+        print(f"  Top {k}:", ranking[:k])
+        for i, group in enumerate(l_cohesive):
+            has_member = any(c in ranking[:k] for c in group)
+            print(f"    Group {i+1} {group}: {'✓' if has_member else '✗'}")
