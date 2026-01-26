@@ -5,10 +5,13 @@ import pickle
 import pandas as pd
 import pytest
 import pickle 
+import numpy as np 
 
 from utils.io import load_consensus_ranking, load_sampled_preferences 
 
 
+
+# RUN USING: python -m pytest -q 03d_sanity_checks.py 
 # ---- helpers ----
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -83,6 +86,142 @@ def sampled_rankings_paths():
 # =============================================================================
 # Tests
 # =============================================================================
+
+def _infer_universe_from_preferences(preferences: pd.DataFrame):
+    """
+    Universe inferred from the union of all items appearing in any user's ranking.
+    Returns a sorted list of unique item ids.
+    """
+    exploded = preferences.explode("Ranked_Items")
+    items = exploded["Ranked_Items"].dropna().tolist()
+    # Be strict: require ints
+    assert all(isinstance(x, (int, np.integer)) for x in items), (
+        "Non-integer item id found in rankings. "
+        "If your IDs are strings, cast them before writing sampled_rankings.pkl."
+    )
+    return sorted(set(int(x) for x in items))
+
+def _check_rankings_are_full_permutations(preferences: pd.DataFrame, universe=None):
+    """
+    Assert that each user's Ranked_Items list is a permutation of `universe`.
+    If universe is None, infer it from all users (union).
+    """
+    assert "User_ID" in preferences.columns
+    assert "Ranked_Items" in preferences.columns
+
+    user_lists = preferences.groupby("User_ID")["Ranked_Items"].first()
+
+    if universe is None:
+        universe = _infer_universe_from_preferences(preferences)
+
+    Uset = set(universe)
+    d = len(universe)
+    assert d > 0
+
+    bad = []
+    for uid, r in user_lists.items():
+        # Must be list-like
+        assert isinstance(r, (list, tuple)), f"User {uid} Ranked_Items is not list/tuple: {type(r)}"
+
+        # All ints
+        if not all(isinstance(x, (int, np.integer)) for x in r):
+            bad.append((uid, "non-int item(s)", r))
+            continue
+
+        r = [int(x) for x in r]
+
+        # Length must match universe size
+        if len(r) != d:
+            missing = sorted(Uset - set(r))
+            extra = sorted(set(r) - Uset)
+            bad.append((uid, f"len={len(r)} expected={d}", {"missing": missing[:20], "extra": extra[:20]}))
+            continue
+
+        # No duplicates
+        if len(set(r)) != len(r):
+            # find first few duplicates
+            seen = set()
+            dupes = []
+            for x in r:
+                if x in seen:
+                    dupes.append(x)
+                seen.add(x)
+            bad.append((uid, "duplicates", dupes[:20]))
+            continue
+
+        # Must match universe exactly
+        if set(r) != Uset:
+            missing = sorted(Uset - set(r))
+            extra = sorted(set(r) - Uset)
+            bad.append((uid, "not equal to universe", {"missing": missing[:20], "extra": extra[:20]}))
+
+    assert not bad, (
+        "Some user rankings are not full permutations of the expected universe.\n"
+        + "\n".join([f"User {uid}: {reason} -> {info}" for uid, reason, info in bad[:25]])
+        + ("" if len(bad) <= 25 else f"\n...and {len(bad)-25} more.")
+    )
+
+def test_rankings_all_same_length_and_permutations(pref_path):
+    """
+    Single-file check: every user ranking is same length, no duplicates, and matches inferred universe.
+    """
+    preferences = load_sampled_preferences(pref_path)
+    _check_rankings_are_full_permutations(preferences, universe=None)
+
+# def test_rankings_contiguous_0_to_d_minus_1(pref_path):
+#     """
+#     Stronger check: item IDs must be exactly {0,1,...,d-1} (contiguous).
+#     This matches the assumption in your ILP/tournament code.
+#     """
+#     preferences = load_sampled_preferences(pref_path)
+#     universe = _infer_universe_from_preferences(preferences)
+#     d = len(universe)
+
+#     expected = list(range(d))
+#     assert universe == expected, (
+#         "Item IDs are not contiguous 0..d-1.\n"
+#         f"Expected: {expected[:50]}{'...' if d>50 else ''}\n"
+#         f"Found:    {universe[:50]}{'...' if d>50 else ''}\n"
+#         "Fix by relabeling items to 0..d-1 during preprocessing."
+#     )
+
+# def test_all_sampled_rankings_have_valid_full_permutations(sampled_rankings_paths):
+#     """
+#     Batch check across multiple sample files.
+#     Ensures all samples satisfy the permutation + equal-length requirement.
+#     """
+#     failures = []
+#     for p in sampled_rankings_paths:
+#         prefs = load_sampled_preferences(p)
+#         try:
+#             _check_rankings_are_full_permutations(prefs, universe=None)
+#         except AssertionError as e:
+#             failures.append((p, str(e)))
+
+#     assert not failures, (
+#         "Some sampled_rankings.pkl files contain invalid rankings.\n"
+#         + "\n\n".join([f"{path}:\n{msg}" for path, msg in failures[:10]])
+#         + ("" if len(failures) <= 10 else f"\n\n...and {len(failures)-10} more.")
+#     )
+
+# def test_all_sampled_rankings_contiguous_ids(sampled_rankings_paths):
+#     """
+#     Batch check: every sample uses contiguous IDs 0..d-1.
+#     """
+#     failures = []
+#     for p in sampled_rankings_paths:
+#         prefs = load_sampled_preferences(p)
+#         universe = _infer_universe_from_preferences(prefs)
+#         d = len(universe)
+#         if universe != list(range(d)):
+#             failures.append((p, universe[:50], d))
+
+#     assert not failures, (
+#         "Some samples have non-contiguous item IDs.\n"
+#         + "\n".join([f"{path}: d={d}, first_ids={u}" for path, u, d in failures[:10]])
+#         + ("" if len(failures) <= 10 else f"\n...and {len(failures)-10} more.")
+#     )
+
 
 def test_preferences_have_multiple_users_and_items(pref_path):
     preferences = load_sampled_preferences(pref_path)

@@ -185,7 +185,7 @@ def main():
         print(f"Using existing directory: {args.outdir}")
 
     # 2. Load Data
-    # ipdb.set_trace() 
+    ipdb.set_trace() 
     rankings, all_items = load_rankings_to_df(args.input) #load_rankings_to_list(args.input)
     group_df = pickle.load(open(args.group_file, 'rb'))
     
@@ -227,26 +227,26 @@ def main():
             
             print(f"-> Saved to {file_path}")
             
-        # alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes = process_for_fair_ranking(sampled_items[seed], group_df, formatted_sampled_rankings[seed])
-        # for i, (name, method) in enumerate(FAIR_METHODS.items(), len(VANILLA_METHODS)+1):
-        #     print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
+        alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes = process_for_fair_ranking(sampled_items[seed], group_df, formatted_sampled_rankings[seed])
+        for i, (name, method) in enumerate(FAIR_METHODS.items(), len(VANILLA_METHODS)+1):
+            print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
             
-        #     # Calculate Ranking
-        #     result = method(alphas, betas, ranks_for_fairness, attributes_map, num_attributes)
-        #     result = [idx_to_item[i] for i in result]
-        #     # ipdb.set_trace() 
-        #     # Construct Filename
-        #     file_name = f"{name}.txt"
-        #     file_path = os.path.join(write_dir, file_name)
+            # Calculate Ranking
+            result = method(alphas, betas, ranks_for_fairness, attributes_map, num_attributes)
+            result = [idx_to_item[i] for i in result]
+            # ipdb.set_trace() 
+            # Construct Filename
+            file_name = f"{name}.txt"
+            file_path = os.path.join(write_dir, file_name)
             
-        #     # Write to File
-        #     with open(file_path, 'w', encoding='utf-8') as f:
-        #         f.write(f"# Method: {name}\n")
-        #         # f.write(f"# Rank ItemID Score\n")
-        #         for rank, item, in enumerate(result, 1):
-        #             f.write(f"{rank} {item}\n")
+            # Write to File
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(f"# Method: {name}\n")
+                # f.write(f"# Rank ItemID Score\n")
+                for rank, item, in enumerate(result, 1):
+                    f.write(f"{rank} {item}\n")
             
-        #     print(f"-> Saved to {file_path}")
+            print(f"-> Saved to {file_path}")
 
 
         print("\n" + "=" * 60)
@@ -329,5 +329,5 @@ def test():
 
 
 if __name__ == "__main__":
-    test() 
-    # main()
+    # test() 
+    main()

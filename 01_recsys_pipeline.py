@@ -88,7 +88,7 @@ def calculate_ranking_metrics(predictions, k=10, threshold=4.0):
     # Return the average across all users
     return sum(recalls) / len(recalls), sum(ndcgs) / len(ndcgs)
 
-def export_recommendations(model_path, output_file='recommendations.csv'):
+def export_recommendations_old(model_path, output_file='recommendations.csv'):
     """
     Generates Top-N recommendations for EVERY user and writes them to a CSV file line-by-line.
     """
@@ -143,6 +143,62 @@ def export_recommendations(model_path, output_file='recommendations.csv'):
 
     print("--- Export Complete ---")
 
+def export_recommendations(model_path, output_file='recommendations.csv', top_n=10):
+    """
+    Generates Top-N recommendations for EVERY user and writes them to a CSV file line-by-line.
+    """
+    print(f"Loading model from {model_path}...")
+    _, algo = dump.load(model_path)
+    trainset = algo.trainset
+    
+    # 1. Prepare internal lists to speed up the loop
+    all_item_inner_ids = list(trainset.all_items())
+    
+    print(f"Starting export to {output_file}...")
+    
+    # 2. Open the file in write mode
+    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        
+        # Write Header
+        writer.writerow(['User_ID', 'Movie_ID', 'Estimated_Rating'])
+        
+        # 3. Iterate over every user in the training set
+        for i, u_inner_id in enumerate(trainset.all_users()):
+            
+            # Progress Logger
+            if i % 500 == 0:
+                print(f"  Processed {i}/{trainset.n_users} users...")
+            
+            # Get the Raw User ID (for the file)
+            u_raw_id = trainset.to_raw_uid(u_inner_id)
+            
+            # Build a dict of items the user has already rated (item_id -> rating)
+            user_rated_items = {item_idx: rating for (item_idx, rating) in trainset.ur[u_inner_id]}
+
+            user_predictions = []
+            
+            # 4. Score all items for this user
+            for i_inner_id in all_item_inner_ids:
+                if i_inner_id in user_rated_items:
+                    # Use actual rating for already-rated items
+                    score = user_rated_items[i_inner_id]
+                else:
+                    # Estimate rating for unrated items
+                    score = algo.estimate(u_inner_id, i_inner_id)
+                user_predictions.append((i_inner_id, score))
+            
+            # 5. Pick Top-N
+            user_predictions.sort(key=lambda x: x[1], reverse=True)
+            top_recs = user_predictions
+            
+            # 6. Write to file immediately
+            for i_inner_id, score in top_recs:
+                i_raw_id = trainset.to_raw_iid(i_inner_id)
+                writer.writerow([u_raw_id, i_raw_id, round(score, 4)])
+
+    print("--- Export Complete ---")
+    
 def surprise_pipeline(data_path, model_out):
     print("--- STARTING SURPRISE PIPELINE ---")
     

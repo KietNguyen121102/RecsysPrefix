@@ -260,7 +260,7 @@ def main():
     def mark(x):
         return "✓" if all(x) else "✗"
 
-    ipdb.set_trace() 
+    # ipdb.set_trace() 
     for method, satisfaction in results:
         jr, pjr, ejr = satisfaction["JR"], satisfaction["PJR"], satisfaction["EJR"]
         print(f"{method:<20} | {mark(jr):^5} | {mark(pjr):^5} | {mark(ejr):^5}")
