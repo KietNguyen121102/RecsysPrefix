@@ -86,6 +86,7 @@ def calculate_average_tau(user_rankings, consensus_map):
     2. Look up the rank of these items in the Consensus Map.
     3. Compare the User's Rank (0, 1, 2...) vs Consensus Rank.
     """
+    # ipdb.set_trace()
     taus = []
     
     for uid, user_list in user_rankings.items():
@@ -96,9 +97,8 @@ def calculate_average_tau(user_rankings, consensus_map):
         user_ranks = list(range(len(user_list)))
         
         # 2. Get the Consensus ranks for these specific items
-    
         default_rank = 100000 
-        consensus_ranks = [consensus_map.get(item, default_rank) for item in user_list]
+        consensus_ranks = [consensus_map.get(str(item), default_rank) for item in user_list]
         
         # 3. Calculate Kendall Tau
        
@@ -178,6 +178,7 @@ def test():
 
     # 1. Load User Data
     rankings = load_sampled_preferences(args.pref) #load_user_lists(args.pref)
+    rankings = rankings.astype({'User_ID': str})
     user_rankings = rankings.set_index("User_ID")["Ranked_Items"].to_dict()
     ipdb.set_trace() 
     # 2. Find all consensus files

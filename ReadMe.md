@@ -10,6 +10,7 @@ You will need to download the datasets used in this work.
 
 # Libraries 
 Please see ```requirements.txt``` for a list of all the packages used for obtaining our empirical results. 
+Please explicitly make sure that you have an ILP solver installed: ```pip install "cvxpy[CBC,CVXOPT,GLOP,GLPK,GUROBI,MOSEK,PDLP,SCIP,XPRESS]"``` 
 
 # Datasets 
 
