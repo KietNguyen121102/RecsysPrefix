@@ -254,5 +254,80 @@ def main():
         print(f"All files are located in: ./{args.outdir}/")
         print("=" * 60)
 
+def test(): 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input', '-i', default='/u/rsalgani/2024-2025/RecsysPrefix/data/ml-1m/full_recset.csv', help='Input CSV file')
+    parser.add_argument('--outdir', '-o', default='/data2/rsalgani/Prefix/ml-1m/agg_files', help='Output directory')
+    parser.add_argument('--group-file', '-g', default='data/ml-1m/item_groups.pkl', help='Group attributes CSV file')
+    # parser.add_argument('--top-k', '-k', type=int, default=3453, help='Items to save per file')
+    parser.add_argument('--user-sample-size', '-us', type=int, default=10, help='Number of users to sample')
+    parser.add_argument('--item-sample-size', '-is', type=int, default=20, help='Number of items to sample')
+    parser.add_argument('--n-samples', '-n', type=int, default=1, help='Number of samples to generate')
+    args = parser.parse_args()
+
+    print(args)
+    
+    print("=" * 60)
+    print("Rank Aggregation (Separate Output Files)")
+    print("=" * 60)
+
+    # 1. Create Output Directory
+    if not os.path.exists(args.outdir):
+        os.makedirs(args.outdir)
+        print(f"Created directory: {args.outdir}")
+    else:
+        print(f"Using existing directory: {args.outdir}")
+
+    # 2. Load Data
+    # ipdb.set_trace() 
+    rankings, all_items = load_rankings_to_df(args.input) #load_rankings_to_list(args.input)
+    group_df = pickle.load(open(args.group_file, 'rb'))
+    
+    # 3. Generate Sample Sets
+    sampled_rankings, sampled_items, sampled_users = generate_sample_sets(n_samples=args.n_samples, n_users=args.user_sample_size, n_items=args.item_sample_size, all_items=list(all_items), preferences=rankings)
+    formatted_sampled_rankings  = [format_sampled_rankings(sampled_ranking) for sampled_ranking in sampled_rankings]
+    
+    ipdb.set_trace()
+    
+    # 3. Process each method and save immediately
+    for seed in range(args.n_samples):
+        write_dir = os.path.join(args.outdir, f"sample_{seed}")
+        if not os.path.exists(write_dir):
+            os.makedirs(write_dir, exist_ok=True)
+        
+        total = len(VANILLA_METHODS) + len(FAIR_METHODS)
+        print(f"\nProcessing {total} methods...")
+        
+            
+        alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes = process_for_fair_ranking(sampled_items[seed], group_df, formatted_sampled_rankings[seed])
+        ipdb.set_trace() 
+        for i, (name, method) in enumerate(FAIR_METHODS.items(), len(VANILLA_METHODS)+1):
+            print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
+            
+            # Calculate Ranking
+            result = method(alphas, betas, ranks_for_fairness, attributes_map, num_attributes)
+            result = [idx_to_item[i] for i in result]
+            ipdb.set_trace() 
+            # Construct Filename
+            file_name = f"{name}.txt"
+            file_path = os.path.join(write_dir, file_name)
+            
+            # # Write to File
+            # with open(file_path, 'w', encoding='utf-8') as f:
+            #     f.write(f"# Method: {name}\n")
+            #     # f.write(f"# Rank ItemID Score\n")
+            #     for rank, item, in enumerate(result, 1):
+            #         f.write(f"{rank} {item}\n")
+            
+            # print(f"-> Saved to {file_path}")
+
+
+        print("\n" + "=" * 60)
+        print("Aggregation Complete!")
+        print(f"All files are located in: ./{args.outdir}/")
+        print("=" * 60)
+
+
 if __name__ == "__main__":
-    main()
+    test() 
+    # main()
