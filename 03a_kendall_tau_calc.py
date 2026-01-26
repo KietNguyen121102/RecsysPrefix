@@ -5,7 +5,9 @@ import numpy as np
 from scipy.stats import kendalltau
 from collections import defaultdict
 import argparse
+import ipdb 
 
+from utils.io import load_sampled_preferences
 # =============================================================================
 # 1. Data Loading
 # =============================================================================
@@ -167,5 +169,62 @@ def main():
     print("Note: Kendall Tau ranges from 1.0 (Identical) to -1.0 (Completely Reversed).")
     print("A higher score means the consensus ranking preserves the individual user preferences better.")
 
+
+def test(): 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--pref', '-p', default='/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/sampled_rankings.pkl', help='Path to user recommendations CSV')
+    parser.add_argument('--agg', '-c', default='/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/', help='Directory containing consensus TXT files')
+    args = parser.parse_args()
+
+    # 1. Load User Data
+    rankings = load_sampled_preferences(args.pref) #load_user_lists(args.pref)
+    user_rankings = rankings.set_index("User_ID")["Ranked_Items"].to_dict()
+    ipdb.set_trace() 
+    # 2. Find all consensus files
+    consensus_files = glob.glob(os.path.join(args.agg, "*.txt"))
+    if not consensus_files:
+        print(f"No .txt files found in {args.agg}")
+        return
+
+    print(f"\nComparing {len(consensus_files)} consensus methods against {len(user_rankings)} pref...")
+    print("=" * 70)
+    print(f"{'Method':<20} | {'Avg Kendall Tau':<15} | {'Interpretation'}")
+    print("-" * 70)
+
+    results = []
+
+    # 3. Iterate over each method
+    for file_path in consensus_files:
+        method_name = os.path.splitext(os.path.basename(file_path))[0]
+        
+        # Load the ranking
+        consensus_map = load_consensus_ranking(file_path)
+        
+        if not consensus_map:
+            continue
+            
+        # Calculate Metric
+        avg_tau = calculate_average_tau(user_rankings, consensus_map)
+        results.append((method_name, avg_tau))
+
+    # 4. Sort by highest correlation
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    # 5. Print Table
+    for name, score in results:
+        # Quick visual interpretation
+        interp = ""
+        if score > 0.5: interp = "High Agreement"
+        elif score > 0.1: interp = "Positive"
+        elif score > -0.1: interp = "Uncorrelated"
+        else: interp = "Negative/Inverse"
+        
+        print(f"{name:<20} | {score:13.4f}   | {interp}")
+
+    print("=" * 70)
+    print("Note: Kendall Tau ranges from 1.0 (Identical) to -1.0 (Completely Reversed).")
+    print("A higher score means the consensus ranking preserves the individual user preferences better.")
+    
 if __name__ == "__main__":
-    main()
+    test() 
+    # main()
