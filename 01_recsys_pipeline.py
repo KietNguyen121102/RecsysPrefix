@@ -88,7 +88,7 @@ def calculate_ranking_metrics(predictions, k=10, threshold=4.0):
     # Return the average across all users
     return sum(recalls) / len(recalls), sum(ndcgs) / len(ndcgs)
 
-def export_recommendations(model_path, output_file='recommendations.csv', top_n=10):
+def export_recommendations(model_path, output_file='recommendations.csv'):
     """
     Generates Top-N recommendations for EVERY user and writes them to a CSV file line-by-line.
     """
@@ -134,7 +134,7 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
             # 5. Pick Top-N
             user_predictions.sort(key=lambda x: x[1], reverse=True)
             top_recs = user_predictions
-            ipdb.set_trace() 
+            # ipdb.set_trace() 
             
             # 6. Write to file immediately
             for i_inner_id, score in top_recs:
@@ -210,7 +210,7 @@ def main():
     args = parser.parse_args()
     print(args)
     surprise_pipeline(data_path=args.data_path, model_out=args.model_out)
-    export_recommendations(args.model_out, output_file=args.output_file, top_n=args.top_n)
+    export_recommendations(args.model_out, output_file=args.output_file)
 
 
 if __name__ == "__main__":

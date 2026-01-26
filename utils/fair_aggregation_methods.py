@@ -14,8 +14,8 @@ print(cp.installed_solvers())
 #Helper functions
 ####
 ####
-CUTOFFN = 25
-CUTOFFD = 100
+# CUTOFFN = 20
+# CUTOFFD = 100
 TOPK = 4
 
 def Kendall_Tau_Dist(first, second):
@@ -281,7 +281,7 @@ def FairILP(alphas, betas, rankings, id_attribute, num_attributes):
 #Think of this as the 'best case' scenario possible.
 #Takes in the fairness parameters, rankings, mapping of elements to attributes
 def Consensus(alphas, betas, rankings, id_attribute, num_attributes):
-
+    # ipdb.set_trace() 
     element_count = len(rankings[0])
 
     #STEP 1: determining top-k elements
@@ -599,6 +599,7 @@ def BFI_Algo(alphas, betas, rankings, id_attribute, num_attributes):
 
 #Helper function to find the closest fair ranking to the given rank
 def Closest_Fair_Ranking(rank, id_attribute, num_attributes):
+    ipdb.set_trace() 
     elements_taken = [0] * num_attributes
     fair_rank = []
     topk_elements = set()

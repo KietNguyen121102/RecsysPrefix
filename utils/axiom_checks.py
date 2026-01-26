@@ -45,11 +45,9 @@ def JR_check_satisfaction_given_committee(proposed_committee, partial_lists, all
         for voter in approving_voters: 
             approval_set = partial_lists[partial_lists['User_ID'] ==  voter]['Ranked_Items'].unique().tolist()
             if len(np.intersect1d(approval_set, proposed_committee)) == 0: counter += 1 
-        if counter == n/k: 
+        if counter >= n/k: 
             return False             
     return True
-
-
 
 def PJR_check_satisfaction_given_committee(proposed_committee, partial_lists, l_cohesive):
     n, k = len(partial_lists['User_ID'].unique()), len(proposed_committee)
@@ -81,9 +79,11 @@ def EJR_check_satisfaction_given_committee(proposed_committee, partial_lists):
     # for l in tqdm(range(1, k+1)): #iterate through l, increasing from 1
     for l in range(1, k+1):
         unsatisfied_voter_set = prune_satisfied_for_EJR(partial_lists, proposed_committee, l)
+        # if len(proposed_committee) == 5: 
+            # ipdb.set_trace() 
         voter_sets, candidate_sets = find_maximal_cohesive_groups(unsatisfied_voter_set, committee_size=k)
         # voter_sets, cand_sets = find_maximal_cohesive_groups_groupby(partial_lists)
         for idx, v in enumerate(voter_sets): 
-            if len(v) >= l*(n/k) and len(candidate_sets[idx]) == l: 
+            if len(v) >= (l*n)/k and len(candidate_sets[idx]) >= l: 
                 return False
     return True

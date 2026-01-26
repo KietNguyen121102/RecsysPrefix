@@ -12,6 +12,7 @@ import math
 import pickle 
 from utils.cohesive_group_search import find_maximal_cohesive_groups, find_all_cohesive_groups
 from utils.axiom_checks import JR_check_satisfaction_given_committee, PJR_check_satisfaction_given_committee, EJR_check_satisfaction_given_committee
+from utils.io import load_consensus_ranking, load_sampled_preferences
 # from cohesive_group_search2 import maximal_bicliques_implicit_gc, add_subsets_fast
 
 # =============================================================================
@@ -24,45 +25,6 @@ def preprocess_for_JR(approvals):
     n_users = len(user_to_set)
     all_candidates = list(movie_to_users.keys())
     return user_to_set, movie_to_users, n_users, all_candidates
-
-# =============================================================================
-# 2. Data Loading
-# =============================================================================
-
-def load_consensus_ranking(file_path):
-    """
-    Loads a consensus ranking file (rank item score).
-    Returns a Dictionary: { 'ItemID': Rank_Integer }
-    """
-    rank_map = {}
-    item_id_list = []
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith("#") or not line.strip():
-                    continue
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    # Format: Rank ItemID Score
-                    # We only care about the ItemID and its Rank (order)
-                    rank = int(parts[0])
-                    item_id = parts[1]
-                    item_id_list.append(int(item_id)) 
-                    rank_map[item_id] = rank
-    except Exception as e:
-        print(f"Error reading {file_path}: {e}")
-        return {}
-        
-    return item_id_list
-
-def load_sampled_preferences(file_path):
-    """
-    Loads sampled user preferences from a CSV file.
-    Expects columns: User_ID, Movie_ID, Estimated_Rating
-    """
-    # ipdb.set_trace() 
-    preferences = pickle.load(open(file_path, 'rb')) #.explode('Ranked_Items').reset_index(drop=True)
-    return preferences
 # =============================================================================
 # 3. Main Pipeline
 # =============================================================================
@@ -153,6 +115,7 @@ def main():
         method: {k: all(v) for k, v in metrics.items()}
             for method, metrics in results
         }).T
+    # ipdb.set_trace() 
     pickle.dump(results_df, open(f'{args.agg}/axiom_satisfaction_results.pkl', 'wb')) 
 
 def test(): 
@@ -180,23 +143,42 @@ def test():
                 .explode('Ranked_Items')
                 .reset_index(drop=True)
             )
-        ipdb.set_trace()
+        # ipdb.set_trace()
         # Calculate Satisfaction Over Axioms
         # user_to_set, movie_to_users, n_users, all_candidates = preprocess_for_JR(preferences)
         voter_sets, candidate_sets, l_cohesive = find_all_cohesive_groups(preferences_at_prefix, committee_size=prefix_idx+1, number_voters=number_voters)
+        satisfaction['JR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
         satisfaction['EJR'] = EJR_check_satisfaction_given_committee(committee[:prefix_idx+1], preferences_at_prefix) 
+        satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
         
-        # satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
-        print(satisfaction['EJR'])
-
+        print(prefix_idx, satisfaction)
 
 def test2(): 
     preferences = pd.DataFrame({
         'User_ID': [0, 1, 2, 3, 4, 5],
-        'Ranked_Items': [[2,0,1,5,3,4], [2,0,1,5,3,4], [3,0,1,5,2,4], [3,0,1,5,2,4], [4,0,1,5,3,2], [4,0,1,5,3,2]]
+        'Ranked_Items': [[2,0,1,5,3,4], [2,0,1,5,3,4], 
+                         [3,0,1,5,2,4], [3,0,1,5,2,4], 
+                         [4,0,1,5,3,2], [4,0,1,5,3,2]]
     })
+    # preferences = pd.DataFrame({
+    #     'User_ID': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    #     'Ranked_Items': [
+    #         [5,7,15,3,4],
+    #         [5,8,16,3,4],
+    #         [5,9,17,3,4],
+    #         [5,10,18,3,4],
+    #         [5,6,19,3,4],
+    #         [5,25,20,1,2],
+    #         [5,11,21,1,2],
+    #         [5,12,22,1,2],
+    #         [5,13,23,1,2],
+    #         [5,14,24,1,2],
+    #                      ]
+    # })
     item_attribute = {0:0, 1:1, 2:1, 3:1, 4:1, 5:2}
-    committee = [0,2,3,5,4,1]
+    committee = [0,2,3,5,4,1] # SHOULD PASS
+    committee = [2,1,5,0,3,4] # SHOULD FAIL 
+    # committee = [5, 6, 25, 19, 20] # SHOULD FAIL EJR
     number_voters = len(preferences['User_ID'].unique())
     all_candidates = preferences.explode('Ranked_Items')['Ranked_Items'].unique()
     number_candidates = len(all_candidates)
@@ -205,9 +187,9 @@ def test2():
     vidx_to_int = {vidx: i for i, vidx in enumerate(preferences['User_ID'].unique())}
     cidx_to_int = {cidx: i for i, cidx in enumerate(all_candidates)}
     
-    preferences['User_ID'] = preferences['User_ID'].map(vidx_to_int)
-    preferences['Ranked_Items'] = preferences['Ranked_Items'].apply(lambda x: [cidx_to_int[c] for c in x])
-    committee = [cidx_to_int[c] for c in committee if c in cidx_to_int]
+    # preferences['User_ID'] = preferences['User_ID'].map(vidx_to_int)
+    # preferences['Ranked_Items'] = preferences['Ranked_Items'].apply(lambda x: [cidx_to_int[c] for c in x])
+    # committee = [cidx_to_int[c] for c in committee if c in cidx_to_int]
     
     for prefix_idx in tqdm(range(len(committee))):
         # print(preferences_at_prefix)
@@ -231,6 +213,52 @@ def test2():
             
         # satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
         print(satisfaction)
+def test3(): 
+    
+    preferences = pd.DataFrame({
+        'User_ID': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        'Ranked_Items': [
+            [5,7,15,3,4],
+            [5,8,16,3,4],
+            [5,9,17,3,4],
+            [5,10,18,3,4],
+            [5,6,19,3,4],
+            [5,25,20,1,2],
+            [5,11,21,1,2],
+            [5,12,22,1,2],
+            [5,13,23,1,2],
+            [5,14,24,1,2],
+                         ]
+    })
+    
+    committee = [5, 6, 25, 19, 20] # SHOULD FAIL EJR
+    number_voters = len(preferences['User_ID'].unique())
+    all_candidates = preferences.explode('Ranked_Items')['Ranked_Items'].unique()
+    number_candidates = len(all_candidates)
+    satisfaction = {}
+    
+    for prefix_idx in tqdm(range(len(committee))):
+        # print(preferences_at_prefix)
+        preferences_at_prefix = (
+                preferences
+                .assign(Ranked_Items=lambda df:
+                        df['Ranked_Items'].apply(lambda x: x[:prefix_idx + 1]))
+                .explode('Ranked_Items')
+                .reset_index(drop=True)
+            )
+        # ipdb.set_trace()
+        # Calculate Satisfaction Over Axioms
+        # user_to_set, movie_to_users, n_users, all_candidates = preprocess_for_JR(preferences)
+        voter_sets, candidate_sets, l_cohesive = find_all_cohesive_groups(preferences_at_prefix, committee_size=prefix_idx+1, number_voters=number_voters)
+        satisfaction['JR'] = JR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, all_candidates=all_candidates, n=number_voters, k=prefix_idx+1)
+        satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
+        satisfaction['EJR'] = EJR_check_satisfaction_given_committee(committee[:prefix_idx+1], preferences_at_prefix)
+            
+        # satisfaction['PJR'] = PJR_check_satisfaction_given_committee(committee[:prefix_idx+1], partial_lists=preferences_at_prefix, l_cohesive=l_cohesive)
+        print(satisfaction)
+        
 if __name__ == "__main__":
-    # test2() 
-    main()
+    test2()
+    test3()  
+    # test() 
+    # main()
