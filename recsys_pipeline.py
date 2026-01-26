@@ -117,18 +117,20 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
             # Get the Raw User ID (for the file)
             u_raw_id = trainset.to_raw_uid(u_inner_id)
             
-            # Identify items user has already rated (to exclude them)
-            user_rated_inner_ids = set(item_idx for (item_idx, _) in trainset.ur[u_inner_id])
+            # Build a dict of items the user has already rated (item_id -> rating)
+            user_rated_items = {item_idx: rating for (item_idx, rating) in trainset.ur[u_inner_id]}
 
-            
             user_predictions = []
             
             # 4. Score all items for this user
             for i_inner_id in all_item_inner_ids:
-                if i_inner_id not in user_rated_inner_ids:
-                    # Estimate rating (fast calculation)
-                    est_score = algo.estimate(u_inner_id, i_inner_id)
-                    user_predictions.append((i_inner_id, est_score))
+                if i_inner_id in user_rated_items:
+                    # Use actual rating for already-rated items
+                    score = user_rated_items[i_inner_id]
+                else:
+                    # Estimate rating for unrated items
+                    score = algo.estimate(u_inner_id, i_inner_id)
+                user_predictions.append((i_inner_id, score))
             
             # 5. Pick Top-N
             user_predictions.sort(key=lambda x: x[1], reverse=True)
