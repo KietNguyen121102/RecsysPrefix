@@ -6,6 +6,7 @@ from collections import defaultdict
 import numpy as np
 import csv
 import ipdb 
+import argparse 
 
 def get_dataframe_from_predictions(predictions):
     # A list of dictionaries to store prediction details
@@ -133,6 +134,7 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
             # 5. Pick Top-N
             user_predictions.sort(key=lambda x: x[1], reverse=True)
             top_recs = user_predictions
+            ipdb.set_trace() 
             
             # 6. Write to file immediately
             for i_inner_id, score in top_recs:
@@ -141,11 +143,11 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
 
     print("--- Export Complete ---")
 
-def surprise_pipeline():
+def surprise_pipeline(data_path, model_out):
     print("--- STARTING SURPRISE PIPELINE ---")
     
     # 1. Load Data
-    file_path = 'data/ml-1m/ratings.dat'
+    file_path = data_path 
     
     # Define the format: UserID :: MovieID :: Rating :: Timestamp
     reader = Reader(line_format='user item rating timestamp', sep='::', rating_scale=(1, 5))
@@ -168,7 +170,7 @@ def surprise_pipeline():
     print("Training the model...")
     algo.fit(trainset)
 
-    dump.dump('./model', algo=algo)
+    dump.dump(model_out, algo=algo)
 
     # 5. Prediction & Evaluation
     print("Evaluating on Test Set...")
@@ -206,7 +208,7 @@ def main():
     parser.add_argument("--output-file", type=str, required=True)
     parser.add_argument("--top-n", type=int, default=10)
     args = parser.parse_args()
-
+    print(args)
     surprise_pipeline(data_path=args.data_path, model_out=args.model_out)
     export_recommendations(args.model_out, output_file=args.output_file, top_n=args.top_n)
 
