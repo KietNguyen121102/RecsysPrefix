@@ -16,7 +16,7 @@ print(cp.installed_solvers())
 ####
 # CUTOFFN = 20
 # CUTOFFD = 100
-TOPK = 4
+TOPK = 10
 
 def Kendall_Tau_Dist(first, second):
     mappedrank = []
@@ -677,19 +677,23 @@ def test():
 
 
 # #Toy Example 
-# alphas = [0.6, 0.2, 0.1]
-# betas = [1, 1, 1]
-# TOPK = 4
+# alphas = [0.1, 0.8]
+# betas = [1, 1]
+# TOPK = 3
+# CUTOFFN = 25
+# CUTOFFD = 100
 # rankings = [[0, 1, 2, 3, 4, 5], [2, 0, 1, 3, 5, 4], [1, 0, 5, 4, 2, 3]]
-# attributes_map = {0: 0, 1:0, 2:2, 3:1, 4: 2, 5: 1}
-# num_attributes = 3
+# attributes_map = {0: 0, 1:0, 2:1, 3:1, 4: 1, 5: 1}
+# num_attributes = 2
+# rng = np.random.default_rng([9, TOPK, CUTOFFN, len(rankings[0]), int(seed_val)])
 
 # print("Optimal Fair:")
 # FairILP(alphas, betas, rankings, attributes_map, num_attributes)
 # print("------------------------")
 # print("Our algorithm + ILP:")
-# OurAlgo(alphas, betas, rankings, attributes_map, num_attributes)
+# output_ranking = Consensus(alphas, betas, rankings, attributes_map, num_attributes)
 # print("------------------------")
+# print(output_ranking)
 
 # print("Our algorithm + KS:")
 
@@ -697,7 +701,7 @@ def test():
 # seed_val = 1
 # for alpha in alphas:
 #     seed_val *= alpha * 100
-# rng = np.random.default_rng([9, TOPK, CUTOFFN, len(rankings[0]), int(seed_val)])
+
 # OurAlgo_KS(alphas, betas, rankings, attributes_map, num_attributes)
 # print("------------------------")
 # print("Best From Input algorithm")

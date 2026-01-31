@@ -9,12 +9,12 @@ from itertools import permutations, combinations
 from tqdm import tqdm 
 import math 
 
-def read_edgelist_from_csv(path):
+def read_edgelist_from_csv(path, user_key):
     df = pd.read_csv(path)
     U = set()
     V = set()
     edges = set()
-    voters = df['User_ID'].apply(lambda x: f"V_{x}")
+    voters = df[user_key].apply(lambda x: f"V_{x}")
     candidates = df['Ranked_Items'].apply(lambda x: f"C_{x}")
     for i in range(len(voters)):
         # Prefix to disambiguate sides
@@ -26,11 +26,11 @@ def read_edgelist_from_csv(path):
     return U, V, edges
 
 
-def read_edgelist_from_df(df):
+def read_edgelist_from_df(df, user_key):
     U = set()
     V = set()
     edges = set()
-    voters = df['User_ID'].apply(lambda x: f"V_{x}")
+    voters = df[user_key].apply(lambda x: f"V_{x}")
     candidates = df['Ranked_Items'].apply(lambda x: f"C_{x}")
     # with tqdm(total=len(voters), desc="Reading edgelist") as pbar:
     for i in range(len(voters)):
@@ -216,8 +216,8 @@ def add_subsets(voter_sets, candidate_sets, k, n):
     return l_cohesive
 
 
-def find_maximal_cohesive_groups(partial_lists, committee_size):
-    U, V, edges = read_edgelist_from_df(partial_lists)
+def find_maximal_cohesive_groups(partial_lists, committee_size, data_cfg):
+    U, V, edges = read_edgelist_from_df(partial_lists, data_cfg['dataset']['keys']['user_key'])
     # print('Building clique-extended graph...')
     GC = build_clique_extended_graph(U, V, edges)
     # print('Finding maximal bicliques via GC...')
@@ -225,8 +225,8 @@ def find_maximal_cohesive_groups(partial_lists, committee_size):
     return voter_sets, candidate_sets
 
 
-def find_all_cohesive_groups(partial_lists, committee_size, number_voters):
-    U, V, edges = read_edgelist_from_df(partial_lists)
+def find_all_cohesive_groups(partial_lists, committee_size, number_voters, data_cfg):
+    U, V, edges = read_edgelist_from_df(partial_lists, data_cfg['dataset']['keys']['user_key'])
     GC = build_clique_extended_graph(U, V, edges)
     voter_sets, candidate_sets = maximal_bicliques_from_gc(GC, U, V) 
     l_cohesive = add_subsets(voter_sets, candidate_sets,

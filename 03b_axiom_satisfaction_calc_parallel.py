@@ -20,6 +20,8 @@ from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import ipdb 
+import yaml
+
 
 from utils.cohesive_group_search import find_all_cohesive_groups
 from utils.axiom_checks import (
@@ -85,7 +87,7 @@ def load_sampled_preferences(file_path: str) -> pd.DataFrame:
 # =============================================================================
 # 2. Method Evaluation (runs inside worker)
 # =============================================================================
-def _eval_one_method(file_path: str):
+def _eval_one_method(file_path: str, data_cfg):
     global _PREF, _NUM_VOTERS, _ALL_CANDIDATES
 
     method_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -111,7 +113,7 @@ def _eval_one_method(file_path: str):
         )
 
         _, _, l_cohesive = find_all_cohesive_groups(
-            preferences_at_prefix, committee_size=k, number_voters=_NUM_VOTERS
+            preferences_at_prefix, committee_size=k, number_voters=_NUM_VOTERS, data_cfg=data_cfg
         )
 
         comm_k = committee[:k]
@@ -123,6 +125,7 @@ def _eval_one_method(file_path: str):
                 all_candidates=_ALL_CANDIDATES,
                 n=_NUM_VOTERS,
                 k=k,
+                user_key=data_cfg['dataset']['keys']['user_key'],
             )
         )
         satisfaction["PJR"].append(
@@ -130,10 +133,11 @@ def _eval_one_method(file_path: str):
                 comm_k,
                 partial_lists=preferences_at_prefix,
                 l_cohesive=l_cohesive,
+                user_key=data_cfg['dataset']['keys']['user_key'],
             )
         )
         satisfaction["EJR"].append(
-            EJR_check_satisfaction_given_committee(comm_k, preferences_at_prefix)
+            EJR_check_satisfaction_given_committee(comm_k, preferences_at_prefix, user_key=data_cfg['dataset']['keys']['user_key'], data_cfg=data_cfg)
         )
 
         # ---- STATUS PRINTS ----
@@ -156,7 +160,7 @@ def _eval_one_method(file_path: str):
 # =============================================================================
 # 3. Parallel Runner
 # =============================================================================
-def run_parallel(preferences, consensus_files, all_candidates, number_voters, max_workers=None):
+def run_parallel(preferences, consensus_files, all_candidates, number_voters, max_workers=None, data_cfg=None):
     import time
 
     results = []
@@ -167,7 +171,7 @@ def run_parallel(preferences, consensus_files, all_candidates, number_voters, ma
         initializer=_worker_init,
         initargs=(preferences, number_voters, all_candidates),
     ) as ex:
-        futures = {ex.submit(_eval_one_method, fp): fp for fp in consensus_files}
+        futures = {ex.submit(_eval_one_method, fp, data_cfg): fp for fp in consensus_files}
 
         completed = 0
         total = len(futures)
@@ -217,14 +221,25 @@ def main():
         default=None,
         help="Number of worker processes (default: os.cpu_count())",
     )
+    parser.add_argument(
+        "--dataset",
+        "-d",
+        type=str,
+        default=None,
+        help="dataset name (for loading dataset config)",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
     print("(1) Loading data")
     print("-" * 70)
 
+    with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
+        dataset_cfg = yaml.safe_load(f)
+    print(dataset_cfg)
+
     preferences = load_sampled_preferences(args.pref)
-    number_voters = len(preferences["User_ID"].unique())
+    number_voters = len(preferences[dataset_cfg['dataset']['keys']['user_key']].unique())
     all_candidates = preferences.explode("Ranked_Items")["Ranked_Items"].unique()
     number_candidates = len(all_candidates)
 
@@ -250,6 +265,7 @@ def main():
         all_candidates=all_candidates,
         number_voters=number_voters,
         max_workers=args.workers,
+        data_cfg=dataset_cfg,
     )
 
     # 5. Print Table

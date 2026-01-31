@@ -7,6 +7,7 @@ import numpy as np
 import csv
 import ipdb 
 import argparse 
+import yaml
 
 def get_dataframe_from_predictions(predictions):
     # A list of dictionaries to store prediction details
@@ -143,7 +144,7 @@ def export_recommendations_old(model_path, output_file='recommendations.csv'):
 
     print("--- Export Complete ---")
 
-def export_recommendations(model_path, output_file='recommendations.csv', top_n=10):
+def export_recommendations(data_cfg, model_path, output_file='recommendations.csv'):
     """
     Generates Top-N recommendations for EVERY user and writes them to a CSV file line-by-line.
     """
@@ -161,7 +162,7 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
         writer = csv.writer(f)
         
         # Write Header
-        writer.writerow(['User_ID', 'Movie_ID', 'Estimated_Rating'])
+        writer.writerow([data_cfg['dataset']['keys']['user_key'], data_cfg['dataset']['keys']['item_key'], 'Estimated_Rating'])
         
         # 3. Iterate over every user in the training set
         for i, u_inner_id in enumerate(trainset.all_users()):
@@ -199,22 +200,42 @@ def export_recommendations(model_path, output_file='recommendations.csv', top_n=
 
     print("--- Export Complete ---")
     
-def surprise_pipeline(data_path, model_out):
+def surprise_pipeline(data_cfg, model_out):
     print("--- STARTING SURPRISE PIPELINE ---")
     
     # 1. Load Data
-    file_path = data_path 
+    file_path = data_cfg['dataset']['file_path'] 
     
-    # Define the format: UserID :: MovieID :: Rating :: Timestamp
-    reader = Reader(line_format='user item rating timestamp', sep='::', rating_scale=(1, 5))
     
-    print(f"Loading data from {file_path}...")
-    try:
-        data = Dataset.load_from_file(file_path, reader=reader)
-    except FileNotFoundError:
-        print("Error: 'ml-1m/ratings.dat' not found. Please download the dataset.")
-        return
+    if data_cfg['dataset']['name'] == 'ml1m': 
+        # Define the format: UserID :: MovieID :: Rating :: Timestamp
+        reader = Reader(line_format='user item rating timestamp', sep='::', rating_scale=(1, 5))
+        print(f"Loading data from {file_path}...")
+        try:
+            data = Dataset.load_from_file(file_path, reader=reader)
+        except FileNotFoundError:
+            print("Error: 'ml-1m/ratings.dat' not found. Please download the dataset.")
+            return
 
+    
+    if data_cfg['dataset']['name'] == 'goodreads': 
+        df = pd.read_csv(file_path)
+        min_rating = df['rating'].min()
+        max_rating = df['rating'].max()
+        print(f"Rating scale: {min_rating} to {max_rating}")
+        
+        # Create Surprise dataset
+        reader = Reader(rating_scale=(min_rating, max_rating))
+        print(f"Loading data from {file_path}...")
+        try:
+            data = Dataset.load_from_df(df[['user_id', 'book_id', 'rating']], reader)
+        except FileNotFoundError:
+            print(f"Error: '{file_path}' not found. Please download the dataset.")
+            return
+        
+        
+    
+    
     # 2. Train/Test Split
     trainset, testset = train_test_split(data, test_size=0.20, random_state=42)
     print(f"Data split. Train size: {trainset.n_ratings}, Test size: {len(testset)}")
@@ -254,19 +275,21 @@ def surprise_pipeline(data_path, model_out):
     print(f"Final RMSE: {rmse:.4f}")
     print("--- SURPRISE PIPELINE COMPLETE ---")
 
-
-    # pred_df, uid_map, iid_map = full_pred_matrix(algo, trainset)
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-path", type=str, default="data/ml-1m/ratings.dat")
+    parser.add_argument("--dataset", type=str, choices=['ml1m', 'goodreads'], default='ml1m')
+    # parser.add_argument("--data-path", type=str, default="data/ml-1m/ratings.dat")
     parser.add_argument("--model-out", type=str, default="./model")
     parser.add_argument("--output-file", type=str, required=True)
     parser.add_argument("--top-n", type=int, default=10)
     args = parser.parse_args()
     print(args)
-    surprise_pipeline(data_path=args.data_path, model_out=args.model_out)
-    export_recommendations(args.model_out, output_file=args.output_file)
+    with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
+        dataset_cfg = yaml.safe_load(f)
+    print(dataset_cfg)
+
+    surprise_pipeline(data_cfg=dataset_cfg, model_out=args.model_out)
+    export_recommendations(dataset_cfg, args.model_out, output_file=args.output_file)
 
 
 if __name__ == "__main__":

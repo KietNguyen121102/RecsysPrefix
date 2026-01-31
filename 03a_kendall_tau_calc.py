@@ -6,36 +6,33 @@ from scipy.stats import kendalltau
 from collections import defaultdict
 import argparse
 import ipdb 
+import pickle 
+import yaml
 
 from utils.io import load_sampled_preferences
 # =============================================================================
 # 1. Data Loading
 # =============================================================================
 
-def load_user_lists(csv_path):
+def format_sampled_rankings(df, data_cfg):
     """
     Loads user lists from recommendations.csv.
     Returns: { 'User_ID': [item1, item2, item3...] }
     Items are sorted by the estimated rating (descending).
     """
-    print(f"Loading user lists from {csv_path}...")
+    # print(f"Loading user lists from {csv_path}...")
     user_items = defaultdict(list)
     
-    try:
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                uid = row['User_ID']
-                iid = row['Movie_ID']
-                try:
-                    score = float(row['Estimated_Rating'])
-                except ValueError:
-                    continue
-                user_items[uid].append((iid, score))
-    except FileNotFoundError:
-        print(f"Error: Could not find {csv_path}")
-        return {}
-
+    user_key = data_cfg['dataset']['keys']['user_key']
+    item_key = data_cfg['dataset']['keys']['item_key']
+    est_rating_key = data_cfg['dataset']['keys']['est_rating_key']
+    for uid in df[user_key].unique():
+        items = df[f[user_key] == uid]
+        for _, row in items.iterrows():
+            iid = row[item_key]
+            score = row[est_rating_key]
+            user_items[str(uid)].append((str(iid), score))
+    
     # Sort and strip scores to get pure ranked lists
     user_rankings = {}
     for uid, items in user_items.items():
@@ -43,7 +40,7 @@ def load_user_lists(csv_path):
         items.sort(key=lambda x: x[1], reverse=True)
         # Keep only item IDs
         user_rankings[uid] = [iid for iid, score in items]
-        if uid == '5412': print(len(user_rankings[uid]))
+        # if uid == '5412': print(len(user_rankings[uid]))
         
     print(f"Loaded {len(user_rankings)} user lists.")
     
@@ -118,11 +115,13 @@ def main():
     parser.add_argument('--pref', '-p', default='recommendations.csv', help='Path to user recommendations CSV')
     parser.add_argument('--agg', '-c', default='agg_results', help='Directory containing consensus TXT files')
     args = parser.parse_args()
-
+    print(args)
+    with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
+        dataset_cfg = yaml.safe_load(f)
     # 1. Load User Data
-    user_rankings = load_user_lists(args.pref)
-    if not user_rankings:
-        return
+    user_rankings = load_sampled_preferences(args.pref)
+    user_rankings = format_sampled_rankings(user_rankings, data_cfg)
+    
 
     # 2. Find all consensus files
     consensus_files = glob.glob(os.path.join(args.agg, "*.txt"))
@@ -180,7 +179,7 @@ def test():
     rankings = load_sampled_preferences(args.pref) #load_user_lists(args.pref)
     rankings = rankings.astype({'User_ID': str})
     user_rankings = rankings.set_index("User_ID")["Ranked_Items"].to_dict()
-    ipdb.set_trace() 
+    
     # 2. Find all consensus files
     consensus_files = glob.glob(os.path.join(args.agg, "*.txt"))
     if not consensus_files:
