@@ -2,7 +2,9 @@ import cvxpy as cp
 import numpy as np
 import pandas as pd 
 import ipdb 
+import pickle 
 from utils.cohesive_group_search import find_maximal_cohesive_groups, find_all_cohesive_groups
+from utils.io import load_consensus_ranking, load_sampled_preferences
 # from utils.axiom_checks import JR_check_satisfaction_given_committee, PJR_check_satisfaction_given_committee, EJR_check_satisfaction_given_committee
 
 
@@ -118,6 +120,7 @@ def ilp(borda_ranking, cohesive_groups):
     # Define pos[c] = sum_p p * x[c,p]
     for c in range(n):
         constraints.append(pos[c] == cp.sum(cp.multiply(np.arange(n), x[c, :])))
+        
 
     # y tournament structure
     for c in range(n):
@@ -177,13 +180,25 @@ def ilp(borda_ranking, cohesive_groups):
 
     return ranking, problem.value
 
+import numpy as np
+
+
+
+def check_any(name, obj):
+    if obj is None:
+        return
+    arr = obj.toarray() if hasattr(obj, "toarray") else np.asarray(obj)
+    if arr.size and not np.isfinite(arr).all():
+        bad = np.where(~np.isfinite(arr))
+        raise ValueError(f"{name} has non-finite values; example index {bad[0][0]}")
+
 
 
 import cvxpy as cp
 import numpy as np
 import math
 
-def ilp_prefix_jr(borda_ranking, approvals_by_k, n_voters):
+def ilp_prefix_jr_old(borda_ranking, approvals_by_k, n_voters):
     """
     borda_ranking: list[int] length n (candidate IDs 0..n-1)
     approvals_by_k: dict[int, dict[int, list[int]]]
@@ -280,7 +295,35 @@ def ilp_prefix_jr(borda_ranking, approvals_by_k, n_voters):
     objective = cp.Minimize(cp.sum(obj_terms))
 
     problem = cp.Problem(objective, constraints)
-    problem.solve(solver=cp.GUROBI, verbose=False)
+    data = problem.get_problem_data(cp.GUROBI)[0]
+    for k, v in data.items():
+        # many entries are scalars/metadata; only check array-like
+        try:
+            check_any(k, v)
+        except Exception:
+            # ignore non-array entries
+            print(f"Skipping check for {k}")
+    
+    # problem.solve(solver=cp.GUROBI, verbose=True)
+    try:
+        # problem.solve(
+        #     solver=cp.GUROBI,
+        #     verbose=True,
+        #     DualReductions=0,
+        #     QCPDual=0,
+        # )
+        
+        problem.solve(
+            solver=cp.GUROBI,
+            verbose=False,
+            Threads=1,
+            Presolve=0,
+            outputflag=0,
+        )
+    except Exception as e:
+        print("CVXPY problem.status:", problem.status)
+        print("CVXPY solver_stats:", problem.solver_stats)
+        raise
     if problem.status not in ["optimal", "optimal_inaccurate"]:
         problem.solve(solver=cp.CBC, verbose=False)
     if problem.status not in ["optimal", "optimal_inaccurate"]:
@@ -316,10 +359,12 @@ def ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters, alphas, bet
     constraints = []
 
     # Permutation constraints on x
-    for c in range(n):
-        constraints.append(cp.sum(x[c, :]) == 1)
-    for p in range(n):
-        constraints.append(cp.sum(x[:, p]) == 1)
+    # for c in range(n):
+    #     constraints.append(cp.sum(x[c, :]) == 1)
+    # for p in range(n):
+    #     constraints.append(cp.sum(x[:, p]) == 1)
+    constraints += [cp.sum(x, axis=1) == 1]   # each candidate assigned once
+    constraints += [cp.sum(x, axis=0) == 1]   # each position filled once
 
     # Define pos[c] = sum_p p * x[c,p]
     for c in range(n):
@@ -409,7 +454,7 @@ def ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters, alphas, bet
     problem = cp.Problem(objective, constraints)
     problem.solve(solver=cp.GUROBI, verbose=False)
     if problem.status not in ["optimal", "optimal_inaccurate"]:
-        problem.solve(solver=cp.CBC, verbose=False)
+        problem.solve(solver=cp.CBC, verbose=True)
     if problem.status not in ["optimal", "optimal_inaccurate"]:
         raise ValueError(f"Optimization failed with status: {problem.status}")
 
@@ -422,6 +467,145 @@ def ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters, alphas, bet
 
     return ranking, problem.value
 
+
+
+import cvxpy as cp
+import numpy as np
+import math
+
+def ilp_prefix_jr(borda_ranking, approvals_by_k, n_voters, *, debug_sizes=False):
+    n = len(borda_ranking)
+
+    borda_pos = {cand: i for i, cand in enumerate(borda_ranking)}
+
+    x = cp.Variable((n, n), boolean=True)   # x[c,p] = 1 if cand c at position p
+    y = cp.Variable((n, n), boolean=True)   # y[c,d] = 1 if c ranked above d
+    pos = cp.Variable(n, integer=True)      # pos[c] = position index of candidate c
+
+    constraints = []
+
+    # Permutation constraints on x
+    constraints += [cp.sum(x, axis=1) == 1]   # each candidate assigned once
+    constraints += [cp.sum(x, axis=0) == 1]   # each position filled once
+
+    # Define pos[c] = sum_p p * x[c,p]
+    p_idx = np.arange(n)
+    for c in range(n):
+        constraints.append(pos[c] == cp.sum(cp.multiply(p_idx, x[c, :])))
+
+    # IMPORTANT: explicit bounds (helps model build a lot)
+    constraints += [pos >= 0, pos <= n - 1]
+
+    # y tournament structure
+    for c in range(n):
+        constraints.append(y[c, c] == 0)
+    for c in range(n):
+        for d in range(c + 1, n):
+            constraints.append(y[c, d] + y[d, c] == 1)
+
+    # Link y to pos via big-M
+    M = n
+    for c in range(n):
+        for d in range(n):
+            if c == d:
+                continue
+            constraints.append(pos[c] <= pos[d] - 1 + M * (1 - y[c, d]))
+            constraints.append(pos[c] >= pos[d] + 1 - M * y[c, d])
+
+    # Prefix-JR variables
+    z = cp.Variable((n_voters, n), boolean=True)
+
+    for k in range(1, n + 1):
+        quota = math.ceil(n_voters / k)
+        approvals_k = approvals_by_k[k]
+
+        # z link: represented if any approved candidate appears in top-k
+        for v in range(n_voters):
+            A_vk = approvals_k.get(v, [])
+            if not A_vk:
+                constraints.append(z[v, k - 1] == 0)
+                continue
+
+            # FAST version: no Python list of scalar atoms
+            sum_in_topk = cp.sum(x[A_vk, :k])
+
+            # This direction matches your previous logic:
+            constraints.append(z[v, k - 1] <= sum_in_topk)
+
+            # OPTIONAL (recommended): enforce "if sum_in_topk >= 1 then z=1"
+            # comment out if you want the weakest constraints possible
+            constraints.append(sum_in_topk <= len(A_vk) * k * z[v, k - 1])
+
+        # JR constraints per candidate
+        for c in range(n):
+            # build Vc without scanning all voters expensively if you want,
+            # but for n=30 this is fine.
+            Vc = [v for v in range(n_voters) if c in approvals_k.get(v, [])]
+            if len(Vc) < quota:
+                continue
+            constraints.append(cp.sum(1 - z[Vc, k - 1]) <= quota - 1)
+
+    # Objective: minimize pairwise disagreements with Borda
+    obj_terms = []
+    for c in range(n):
+        for d in range(n):
+            if c == d:
+                continue
+            if borda_pos[c] < borda_pos[d]:
+                obj_terms.append(y[d, c])
+    objective = cp.Minimize(cp.sum(obj_terms))
+
+    problem = cp.Problem(objective, constraints)
+
+    # Optional: print canonicalized sizes (true “problem size”)
+    if debug_sizes:
+        data = problem.get_problem_data(cp.GUROBI)[0]
+        print("\n=== Canonicalized GUROBI data sizes ===")
+        for name, obj in data.items():
+            if hasattr(obj, "shape"):
+                nnz = getattr(obj, "nnz", "NA")
+                print(f"{name:>12}: shape={obj.shape}, nnz={nnz}, type={type(obj)}")
+        print("======================================\n")
+
+    # Solve with robust failure handling
+    try:
+        problem.solve(
+            solver=cp.GUROBI,
+            verbose=False,
+            Threads=1,
+            Presolve=0,
+            # If you ever see INF_OR_UNBD later, these help:
+            # reoptimize=True,
+            # DualReductions=0,
+        )
+    except cp.error.SolverError as e:
+        # try a fallback solver so your pipeline keeps running
+        try:
+            problem.solve(solver=cp.SCIP, verbose=False)
+        except Exception:
+            return None, None, f"GUROBI failed during build/solve; SCIP fallback failed too: {e}"
+
+    if problem.status not in ("optimal", "optimal_inaccurate"):
+        # Another fallback
+        try:
+            problem.solve(solver=cp.CBC, verbose=False)
+        except Exception as e:
+            return None, None, f"Non-optimal status {problem.status}; CBC failed: {e}"
+
+    if problem.status not in ("optimal", "optimal_inaccurate"):
+        return None, None, f"Optimization failed with status: {problem.status}"
+
+    # Decode ranking from x
+    x_sol = x.value
+    if x_sol is None:
+        return None, None, "Solved but x.value is None (unexpected)."
+
+    ranking = [None] * n
+    for c in range(n):
+        p = int(np.argmax(x_sol[c, :]))
+        ranking[p] = c
+
+    return ranking, float(problem.value)
 
 
 # usage:
@@ -482,21 +666,61 @@ def test():
     
     
     
-    FAIR_ranking, FAIR_obj_value = ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters=num_voters, k=3, alphas=alphas, betas=betas, attribute_dict=item_attribute, num_attributes=2)
+    # FAIR_ranking, FAIR_obj_value = ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters=num_voters, k=3, alphas=alphas, betas=betas, attribute_dict=item_attribute, num_attributes=2)
     
     
-    print(f"\nPrefix-JR_FAIR constrained ranking (best to worst):")
-    print(f"  {FAIR_ranking}")
+    # print(f"\nPrefix-JR_FAIR constrained ranking (best to worst):")
+    # print(f"  {FAIR_ranking}")
     
-    print(f"\nNumber of disagreements with Borda: {FAIR_obj_value}")
-    
-    
+    # print(f"\nNumber of disagreements with Borda: {FAIR_obj_value}")
     
     
-    # Verify prefix-JR constraints
-    # print("\nPrefix-JR verification:")
-    # for k in range(1, num_candidates + 1):
-    #     print(f"  Top {k}:", ranking[:k])
-    #     for i, group in enumerate(l_cohesive):
-    #         has_member = any(c in ranking[:k] for c in group)
-    #         print(f"    Group {i+1} {group}: {'✓' if has_member else '✗'}")
+def test2(): 
+    num_candidates = 10
+    num_voters = 10
+    preferences = pickle.load(open("/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/sampled_rankings.pkl", 'rb'))
+    all_candidates = preferences['Ranked_Items'].explode().unique().tolist()
+
+    borda_ranking = load_consensus_ranking("/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/BordaCount.txt")
+    item_to_idx = dict(zip(all_candidates, range(len(all_candidates))))
+    user_to_idx = dict(zip(preferences['User_ID'].unique(), range(len(preferences['User_ID'].unique()))))
+    borda_ranking = [item_to_idx[item] for item in borda_ranking]
+    
+    ipdb.set_trace() 
+    # cohesive_groups = {}
+    satisfaction = {}
+    approvals_by_k = {}
+
+    for prefix_idx in range(len(borda_ranking)):
+        k = prefix_idx + 1
+        preferences_at_prefix = (
+            preferences
+            .assign(Ranked_Items=lambda df: df['Ranked_Items'].apply(lambda x: x[:k]))
+            .explode('Ranked_Items')
+            .reset_index(drop=True)
+        )
+        preferences_at_prefix['Ranked_Items'] = preferences_at_prefix['Ranked_Items'].map(item_to_idx)
+        preferences_at_prefix['User_ID'] = preferences_at_prefix['User_ID'].map(user_to_idx)
+        
+        approvals_k = {}
+        for v in range(num_voters):
+            approvals_k[v] = (
+                preferences_at_prefix[preferences_at_prefix["User_ID"] == v]["Ranked_Items"]
+                .unique().tolist()
+            )
+        approvals_by_k[k] = approvals_k
+    
+    # ipdb.set_trace() 
+    ILP_ranking, ILP_obj_value = ilp_prefix_jr(borda_ranking, approvals_by_k, n_voters=num_voters)
+    
+    print("Borda ranking order (best to worst):")
+    print(f"  {borda_ranking}")
+
+    print(f"\nPrefix-JR constrained ranking (best to worst):")
+    print(f"  {ILP_ranking}")
+    
+    print(f"\nNumber of disagreements with Borda: {ILP_obj_value}")
+    
+    
+# test() 
+    
