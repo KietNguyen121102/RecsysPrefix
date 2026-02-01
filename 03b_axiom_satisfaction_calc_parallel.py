@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""
-Parallelized axiom satisfaction evaluation.
 
-Key changes vs original:
-- Parallelizes across consensus methods (.txt files) using ProcessPoolExecutor.
-- Uses a worker initializer to avoid re-pickling the preferences DataFrame for every task.
-- Keeps your per-prefix logic intact (no behavioral changes intended).
-
-Run:
-  python axiom_eval_parallel.py --agg consensus_results --pref sampled_rankings.pkl --workers 8
-"""
 
 import os
 import glob
@@ -29,6 +19,7 @@ from utils.axiom_checks import (
     PJR_check_satisfaction_given_committee,
     EJR_check_satisfaction_given_committee,
 )
+from utils.io import load_consensus_ranking, load_sampled_preferences
 
 # =============================================================================
 # Worker Globals (set once per process)
@@ -46,42 +37,6 @@ def _worker_init(preferences: pd.DataFrame, number_voters: int, all_candidates):
     _PREF = preferences
     _NUM_VOTERS = number_voters
     _ALL_CANDIDATES = all_candidates
-
-
-# =============================================================================
-# 1. Data Loading
-# =============================================================================
-def load_consensus_ranking(file_path: str):
-    """
-    Loads a consensus ranking file.
-    Expected line format: Rank ItemID Score   (or at least Rank ItemID)
-    Returns: list[int] of ItemIDs in ranked order.
-    """
-    item_id_list = []
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("#") or not line.strip():
-                    continue
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    item_id = parts[1]
-                    item_id_list.append(int(item_id))
-    except Exception as e:
-        print(f"Error reading {file_path}: {e}")
-        return []
-
-    return item_id_list
-
-
-def load_sampled_preferences(file_path: str) -> pd.DataFrame:
-    """
-    Loads sampled user preferences from a pickle.
-    Expected DataFrame columns:
-      - User_ID
-      - Ranked_Items  (list-like)
-    """
-    return pickle.load(open(file_path, "rb"))
 
 
 # =============================================================================
@@ -226,6 +181,7 @@ def main():
         "-d",
         type=str,
         default=None,
+        choices=["ml-1m", "goodreads"],
         help="dataset name (for loading dataset config)",
     )
     args = parser.parse_args()
@@ -276,7 +232,7 @@ def main():
     def mark(x):
         return "✓" if all(x) else "✗"
 
-    # ipdb.set_trace() 
+    
     for method, satisfaction in results:
         jr, pjr, ejr = satisfaction["JR"], satisfaction["PJR"], satisfaction["EJR"]
         print(f"{method:<20} | {mark(jr):^5} | {mark(pjr):^5} | {mark(ejr):^5}")

@@ -1,0 +1,244 @@
+import os
+import csv
+import glob
+import numpy as np
+from scipy.stats import kendalltau
+from collections import defaultdict
+import argparse
+import ipdb 
+import pickle 
+import yaml
+
+from utils.io import load_sampled_preferences, format_sampled_rankings, load_consensus_ranking
+# =============================================================================
+# 1. Data Loading
+# =============================================================================
+
+# def format_sampled_rankings(df, data_cfg):
+#     """
+#     Loads user lists from recommendations.csv.
+#     Returns: { 'User_ID': [item1, item2, item3...] }
+#     Items are sorted by the estimated rating (descending).
+#     """
+#     # print(f"Loading user lists from {csv_path}...")
+#     user_items = defaultdict(list)
+    
+#     user_key = data_cfg['dataset']['keys']['user_key']
+#     item_key = data_cfg['dataset']['keys']['item_key']
+#     est_rating_key = data_cfg['dataset']['keys']['est_rating_key']
+#     for uid in df[user_key].unique():
+#         items = df[f[user_key] == uid]
+#         for _, row in items.iterrows():
+#             iid = row[item_key]
+#             score = row[est_rating_key]
+#             user_items[str(uid)].append((str(iid), score))
+    
+#     # Sort and strip scores to get pure ranked lists
+#     user_rankings = {}
+#     for uid, items in user_items.items():
+#         # Sort desc by score
+#         items.sort(key=lambda x: x[1], reverse=True)
+#         # Keep only item IDs
+#         user_rankings[uid] = [iid for iid, score in items]
+#         # if uid == '5412': print(len(user_rankings[uid]))
+        
+#     print(f"Loaded {len(user_rankings)} user lists.")
+    
+#     return user_rankings
+
+# def load_consensus_ranking(file_path):
+#     """
+#     Loads a consensus ranking file (rank item score).
+#     Returns a Dictionary: { 'ItemID': Rank_Integer }
+#     """
+#     rank_map = {}
+#     try:
+#         with open(file_path, 'r', encoding='utf-8') as f:
+#             for line in f:
+#                 if line.startswith("#") or not line.strip():
+#                     continue
+#                 parts = line.strip().split()
+#                 if len(parts) >= 2:
+#                     # Format: Rank ItemID Score
+#                     # We only care about the ItemID and its Rank (order)
+#                     rank = int(parts[0])
+#                     item_id = parts[1]
+#                     rank_map[item_id] = rank
+#     except Exception as e:
+#         print(f"Error reading {file_path}: {e}")
+#         return {}
+        
+#     return rank_map
+
+# =============================================================================
+# 2. Kendall Tau Calculation
+# =============================================================================
+
+def calculate_average_tau(user_rankings, consensus_map):
+    """
+    Calculates the average Kendall Tau across all pref.
+    Method:
+    1. For each user, extract their list of items.
+    2. Look up the rank of these items in the Consensus Map.
+    3. Compare the User's Rank (0, 1, 2...) vs Consensus Rank.
+    """
+    # ipdb.set_trace()
+    taus = []
+    
+    for uid, user_list in user_rankings.items():
+        if len(user_list) < 2:
+            continue  # Cannot calc distance for list of 0 or 1 items
+            
+        # 1. Define User's defined order (ground truth for this calculation)
+        user_ranks = list(range(len(user_list)))
+        
+        # 2. Get the Consensus ranks for these specific items
+        default_rank = 100000 
+        consensus_ranks = [consensus_map.get(str(item), default_rank) for item in user_list]
+        
+        # 3. Calculate Kendall Tau
+       
+        tau, _ = kendalltau(user_ranks, consensus_ranks)
+        
+        if not np.isnan(tau):
+            taus.append(tau)
+            
+    return np.mean(taus) if taus else 0.0
+
+# =============================================================================
+# 3. Main Pipeline
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--pref', '-p', default='', help='Path to user recommendations CSV')
+    parser.add_argument('--agg', '-c', default='agg_results', help='Directory containing consensus TXT files')
+    parser.add_argument('--dataset', '-d', default='ml-1m', choices=['ml-1m', 'goodreads'], help='Dataset name for config loading')
+    
+    args = parser.parse_args()
+    print(args)
+    with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
+        dataset_cfg = yaml.safe_load(f)
+    
+    
+    # 1. Load User Data
+    # ipdb.set_trace() 
+    # user_rankings = load_sampled_preferences(args.pref)
+    # user_rankings = format_sampled_rankings(user_rankings, dataset_cfg)
+    rankings = load_sampled_preferences(args.pref) #load_user_lists(args.pref)
+    rankings = rankings.astype({'User_ID': str})
+    user_rankings = rankings.set_index("User_ID")["Ranked_Items"].to_dict()
+    
+    
+
+    # 2. Find all consensus files
+    consensus_files = glob.glob(os.path.join(args.agg, "*.txt"))
+    if not consensus_files:
+        print(f"No .txt files found in {args.agg}")
+        return
+
+    print(f"\nComparing {len(consensus_files)} consensus methods against {len(user_rankings)} pref...")
+    print("=" * 70)
+    print(f"{'Method':<20} | {'Avg Kendall Tau':<15} | {'Interpretation'}")
+    print("-" * 70)
+
+    results = []
+
+    # 3. Iterate over each method
+    for file_path in consensus_files:
+        method_name = os.path.splitext(os.path.basename(file_path))[0]
+        
+        # Load the ranking
+        consensus_map = load_consensus_ranking(file_path)
+        
+        if not consensus_map:
+            continue
+            
+        # Calculate Metric
+        avg_tau = calculate_average_tau(user_rankings, consensus_map)
+        results.append((method_name, avg_tau))
+
+    # 4. Sort by highest correlation
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    # 5. Print Table
+    for name, score in results:
+        # Quick visual interpretation
+        interp = ""
+        if score > 0.5: interp = "High Agreement"
+        elif score > 0.1: interp = "Positive"
+        elif score > -0.1: interp = "Uncorrelated"
+        else: interp = "Negative/Inverse"
+        
+        print(f"{name:<20} | {score:13.4f}   | {interp}")
+        
+    out_path = os.path.join(args.agg, "kendall_results.pkl")
+
+    with open(out_path, "wb") as f:
+        pickle.dump(results, f)
+
+    print(f"Saved results -> {out_path}")
+
+    print("=" * 70)
+    print("Note: Kendall Tau ranges from 1.0 (Identical) to -1.0 (Completely Reversed).")
+    print("A higher score means the consensus ranking preserves the individual user preferences better.")
+
+def test(): 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--pref', '-p', default='/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/sampled_rankings.pkl', help='Path to user recommendations CSV')
+    parser.add_argument('--agg', '-c', default='/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/', help='Directory containing consensus TXT files')
+    args = parser.parse_args()
+
+    # 1. Load User Data
+    rankings = load_sampled_preferences(args.pref) #load_user_lists(args.pref)
+    rankings = rankings.astype({'User_ID': str})
+    user_rankings = rankings.set_index("User_ID")["Ranked_Items"].to_dict()
+    
+    # 2. Find all consensus files
+    consensus_files = glob.glob(os.path.join(args.agg, "*.txt"))
+    if not consensus_files:
+        print(f"No .txt files found in {args.agg}")
+        return
+
+    print(f"\nComparing {len(consensus_files)} consensus methods against {len(user_rankings)} pref...")
+    print("=" * 70)
+    print(f"{'Method':<20} | {'Avg Kendall Tau':<15} | {'Interpretation'}")
+    print("-" * 70)
+
+    results = []
+
+    # 3. Iterate over each method
+    for file_path in consensus_files:
+        method_name = os.path.splitext(os.path.basename(file_path))[0]
+        
+        # Load the ranking
+        consensus_map = load_consensus_ranking(file_path)
+        
+        if not consensus_map:
+            continue
+            
+        # Calculate Metric
+        avg_tau = calculate_average_tau(user_rankings, consensus_map)
+        results.append((method_name, avg_tau))
+
+    # 4. Sort by highest correlation
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    # 5. Print Table
+    for name, score in results:
+        # Quick visual interpretation
+        interp = ""
+        if score > 0.5: interp = "High Agreement"
+        elif score > 0.1: interp = "Positive"
+        elif score > -0.1: interp = "Uncorrelated"
+        else: interp = "Negative/Inverse"
+        
+        print(f"{name:<20} | {score:13.4f}   | {interp}")
+
+    print("=" * 70)
+    print("Note: Kendall Tau ranges from 1.0 (Identical) to -1.0 (Completely Reversed).")
+    print("A higher score means the consensus ranking preserves the individual user preferences better.")
+    
+if __name__ == "__main__":
+    # test() 
+    main()

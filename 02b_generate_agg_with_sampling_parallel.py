@@ -9,50 +9,56 @@ import pandas as pd
 from tqdm import tqdm
 import yaml
 
+import json
+import traceback
+from dataclasses import dataclass, asdict
+from typing import Any, Optional, Dict
+
+
 from utils.vanilla_aggregation_methods import *
 from utils.fair_aggregation_methods import *
-from utils.borda-prefix-jr_ilp import * 
-
-# =============================================================================
-# Data Loading
-# =============================================================================
-
-def load_rankings_to_df(dataset_cfg): 
-    
-    filepath = dataset_cfg['dataset']['rec_set_path']
-    print(f"Loading data from '{filepath}'...")
-
-    user_key = dataset_cfg['dataset']["keys"]["user_key"]
-    item_key = dataset_cfg['dataset']["keys"]["item_key"]
-    est_rating_key = dataset_cfg['dataset']["keys"]["estimated_rating_key"]
-    
-    try:
-        df = pd.read_csv(filepath)
-    except FileNotFoundError:
-        print(f"Error: File '{filepath}' not found.")
-        sys.exit(1)
-
-    df[est_rating_key] = pd.to_numeric(df[est_rating_key], errors="coerce")
-    df = df.dropna(subset=[est_rating_key])
-
-    df = df.sort_values([user_key, est_rating_key], ascending=[True, False])
-
-    rankings_df = (
-        df.groupby(user_key)[item_key]
-          .apply(list)
-          .reset_index(name="Ranked_Items")
-    )
-
-    all_items = set(df[item_key].unique())
-
-    print(f"Loaded rankings for {len(rankings_df)} users.")
-    print(f"Total unique items found: {len(all_items)}")
-
-    return rankings_df, all_items
+from utils.borda_prefix_jr_ilp import * 
+from utils.io import load_rankings_to_df
+from utils.sampling_logic import generate_sample_sets, generate_sample_sets_stratified_by_bin
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+def _safe_worker_call(kind: str, method_name: str, fn, *args, **kwargs) -> dict:
+    """
+    Run a worker function and ALWAYS return a dict:
+      {
+        "ok": bool,
+        "kind": "VANILLA"|"FAIR"|"OUR",
+        "method": str,
+        "result": Any (if ok),
+        "error": {type, message, traceback} (if not ok)
+      }
+    """
+    try:
+        out = fn(*args, **kwargs)
+        # fn should return (method_name, result) in your current pattern
+        name, result = out
+        return {
+            "ok": True,
+            "kind": kind,
+            "method": name,
+            "result": result,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "kind": kind,
+            "method": method_name,
+            "result": None,
+            "error": {
+                "type": type(e).__name__,
+                "message": str(e),
+                "traceback": traceback.format_exc(),
+            },
+        }
 
 def validate_full_rankings(rankings, candidate_items, context=""):
     """
@@ -185,37 +191,6 @@ def validate_all_candidates_labeled(sampled_items, group_df, context, item_key):
             f"Missing count={len(missing)} example={missing[:30]}"
         )
 
-# =============================================================================
-# Sampling Logic
-# =============================================================================
-
-def generate_sample_sets(dataset_cfg, n_samples, n_users, n_items, all_items, preferences):
-    user_key = dataset_cfg['dataset']["keys"]["user_key"]
-    item_key = dataset_cfg['dataset']["keys"]["item_key"]
-    est_rating_key = dataset_cfg['dataset']["keys"]["estimated_rating_key"]
-    
-    all_users = list(preferences[user_key].unique())
-    dfs, items, users = [], [], []
-    all_items = np.array(list(all_items))
-
-    for seed in range(n_samples):
-        user_idx = np.random.choice(len(all_users), size=n_users, replace=False)
-        item_idx = np.random.choice(all_items, size=n_items, replace=False)
-
-        sampled_pref = preferences[preferences[user_key].isin([all_users[i] for i in user_idx])].copy()
-
-        # Filter to sampled items
-        item_set = set(item_idx.tolist())
-        sampled_pref["Ranked_Items"] = sampled_pref["Ranked_Items"].apply(
-            lambda x: [item for item in x if item in item_set]
-        )
-
-        dfs.append(sampled_pref)
-        items.append(item_idx)
-        users.append(user_idx)
-
-    return dfs, items, users
-
 
 VANILLA_METHODS = {
     "CombMIN": comb_min, "CombMAX": comb_max, "CombSUM": comb_sum,
@@ -225,9 +200,7 @@ VANILLA_METHODS = {
     "Median": median_rank, "Mean": mean_rank,
     "RRF": rrf, "iRANK": irank, "ER": er,
     "PostNDCG": postndcg, "CG": cg, "DIBRA": dibra, 
-     
 }
-
 FAIR_METHODS = {
     "KuhlmanConsensus": Consensus,
     "FairMedian": FairILP,
@@ -264,190 +237,290 @@ def _run_fair_method(method_name: str, alphas, betas, ranks_for_fairness, attrib
 
         return method_name, mapped_back
     except Exception as e:
-        raise RuntimeError(f"[FAIR method {method_name}] failed") from e
+        raise RuntimeError(f"[FAIR method {method_name}] failed from {e}")
 
-def _run_our_method(method_name: str, alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes, k):
+def _run_our_method(method_name: str, borda_ranking, approvals_by_k, n_voters,
+                    alphas, betas, k, attributes_map, num_attributes,
+                    idx_to_item):
     try:
         method = OUR_METHODS[method_name]
-        # borda_ranking, approvals_by_k, n_voters, alphas, betas, k, attribute_dict, num_attributes
-        # (alphas, betas, ranks_for_fairness, attributes_map, num_attributes)
-        borda_ranking = borda_count(ranks_for_fairness, list(range(len(idx_to_item))))
-        borda_ranking = [x for x, _ in borda_ranking]
-        # borda_ranking = [idx_to_item[i] for i in borda_ranking]
-        n_voters = len(ranks_for_fairness)
-        for i, (name, method) in enumerate(OUR_METHODS.items(), len(VANILLA_METHODS)+len(FAIR_METHODS)+1):
-            ipdb.set_trace() 
-            print(f"  [{i:2d}/{total}] Running {name}...", end=" ", flush=True)
-            
-            approvals_by_k = {}
-        
-            for prefix_idx in range(len(borda_ranking)):
-                k = prefix_idx + 1
-                preferences_at_prefix = (
-                    sampled_rankings[seed]
-                    .assign(Ranked_Items=lambda df: df['Ranked_Items'].apply(lambda x: x[:k]))
-                    .explode('Ranked_Items')
-                    .reset_index(drop=True)
-                )
 
-                approvals_k = {}
-                for v in range(n_voters):
-                    approvals_k[v] = (
-                        preferences_at_prefix[preferences_at_prefix["User_ID"] == v]["Ranked_Items"]
-                        .unique().tolist()
-                    )
-                approvals_by_k[k] = approvals_k
+        if method_name == "Our_Prefix_ILP":
+            result, obj = method(borda_ranking, approvals_by_k, n_voters)
+        else:
+            result, obj = method(borda_ranking, approvals_by_k, n_voters,
+                                      alphas, betas, k, attributes_map, num_attributes)
         
-            # result = method(borda_ranking, approvals_by_k, n_voters, alphas, betas, k, attributes_map, num_attributes)
-        
-            # Calculate Ranking
-            if name == 'Our_Prefix_ILP':
-                result, _ = method(borda_ranking, approvals_by_k, n_voters)
-        
-            else:
-                result, _ = method(borda_ranking, approvals_by_k, n_voters, alphas, betas, k, attributes_map, num_attributes)
-
-
-        # map back to original item ids (raise a helpful error if something is out of range)
-        mapped_back = []
-        for i in result:
-            if i not in idx_to_item:
-                raise KeyError(f"Our method returned index {i} not in idx_to_item keys "
-                               f"(expected 0..{max(idx_to_item.keys())}).")
-            mapped_back.append(idx_to_item[i])
-
+        mapped_back = [idx_to_item[i] for i in result]
         return method_name, mapped_back
+
     except Exception as e:
         raise RuntimeError(f"[Our method {method_name}] failed") from e
+
+
+# def _run_our_method(method_name: str, alphas, betas, sampled_rankings, ranks_for_fairness, attributes_map, idx_to_item, user_to_idx, num_attributes, k, dataset_cfg):
+#     user_key = dataset_cfg['dataset']['keys']['user_key']
+#     try:
+#         method = OUR_METHODS[method_name]
+        
+#         #prep variables
+#         borda_ranking = borda_count(ranks_for_fairness, list(range(len(idx_to_item))))
+#         borda_ranking = [x for x, _ in borda_ranking]
+#         item_to_idx = {item: idx for idx, item in idx_to_item.items()}
+#         n_voters = len(ranks_for_fairness)
+#         approvals_by_k = {}
+#         for prefix_idx in range(len(borda_ranking)):
+#             k = prefix_idx + 1
+#             preferences_at_prefix = (
+#                 sampled_rankings
+#                 .assign(Ranked_Items=lambda df: df['Ranked_Items'].apply(lambda x: x[:k]))
+#                 .explode('Ranked_Items')
+#                 .reset_index(drop=True)
+#             )
+#             preferences_at_prefix['Ranked_Items'] = preferences_at_prefix['Ranked_Items'].map(item_to_idx)
+#             preferences_at_prefix[user_key] = preferences_at_prefix[user_key].map(user_to_idx)
+            
+#             approvals_k = {}
+#             for v in range(n_voters):
+#                 approvals_k[v] = (
+#                     preferences_at_prefix[preferences_at_prefix[user_key] == v]["Ranked_Items"]
+#                     .unique().tolist()
+#                 )
+#             approvals_by_k[k] = approvals_k
+
+#         # Calculate Ranking
+#         if method_name == 'Our_Prefix_ILP':
+#             result, _ = method(borda_ranking, approvals_by_k, n_voters)
+#         else:
+#             result, _ = method(borda_ranking, approvals_by_k, n_voters, alphas, betas, k, attributes_map, num_attributes)
+
+
+#         # map back to original item ids (raise a helpful error if something is out of range)
+#         mapped_back = []
+#         for i in result:
+#             if i not in idx_to_item:
+#                 raise KeyError(f"Our method returned index {i} not in idx_to_item keys "
+#                                f"(expected 0..{max(idx_to_item.keys())}).")
+#             mapped_back.append(idx_to_item[i])
+
+#         return method_name, mapped_back
+#     except Exception as e:
+        raise RuntimeError(f"[Our method {method_name}] failed") from e
+
+
 # =============================================================================
 # Main Execution
 # =============================================================================
 
 def main():
+    #Argument parsing
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, choices=['ml1m', 'goodreads'], default='ml1m')
-    # parser.add_argument("--input", "-i", default="recommendations.csv")
-    parser.add_argument("--outdir", "-o", default="consensus_results")
-    # parser.add_argument("--group-file", "-g", default="data/ml-1m/item_groups.pkl")
+    parser.add_argument("--dataset", type=str, choices=['ml-1m', 'goodreads'])
     parser.add_argument("--user-sample-size", "-us", type=int, default=10)
     parser.add_argument("--item-sample-size", "-is", type=int, default=20)
     parser.add_argument("--n-samples", "-n", type=int, default=1)
-    parser.add_argument("--jobs", "-j", type=int, default=os.cpu_count() or 1,
-                        help="Number of parallel worker processes")
-    parser.add_argument("--complete-rankings", action="store_true",
-                        help="Force each user ranking to be a full permutation of the sampled candidates "
-                             "by appending missing items at the end (recommended for Kemeny/ILP assumptions).")
+    parser.add_argument("--jobs", "-j", type=int, default=os.cpu_count() or 1, help="Number of parallel worker processes")
+    parser.add_argument("--sampling_method", type=str, choices=['basic', 'stratified_by_bin'], default='stratified_by_bin',)
+    parser.add_argument("--fairness_k", type=int, default=10, help="k parameter for our fair methods.") 
     args = parser.parse_args()
+    # Load dataset config
     with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
         dataset_cfg = yaml.safe_load(f)
     print(dataset_cfg)
+    k = args.fairness_k
+    user_key = dataset_cfg['dataset']["keys"]["user_key"]
+
     
     print("=" * 60)
     print("Rank Aggregation (Parallel, Safe Fair Mapping)")
     print("=" * 60)
     print(args)
 
-    os.makedirs(args.outdir, exist_ok=True)
-
+    # File housekeeping :) 
+    outdir = f"/data2/rsalgani/Prefix/{args.dataset}/agg_files"
+    os.makedirs(outdir, exist_ok=True)
+    
+    # Load full rankings
     rankings_df, all_items = load_rankings_to_df(dataset_cfg)
-    print(rankings_df.head())
+    
+    # print(rankings_df.head())
     # exit()
-    group_df = pickle.load(open(dataset_cfg['dataset']['group_file'], "rb"))
+    
+    # Load group labels for items (used in stratified sampling and fair methods)
+    group_df = pickle.load(open(dataset_cfg['dataset']['item_group_file_path'], "rb"))
 
-    sampled_rankings_dfs, sampled_items, sampled_users = generate_sample_sets(
-        dataset_cfg, 
-        n_samples=args.n_samples,
-        n_users=args.user_sample_size,
-        n_items=args.item_sample_size,
-        all_items=list(all_items),
-        preferences=rankings_df,
-    )
+    # Generate sample sets
+    if args.sampling_method == 'basic':
+        sampled_rankings_dfs, sampled_items, sampled_users = generate_sample_sets(dataset_cfg, n_samples=args.n_samples, n_users=args.user_sample_size,n_items=args.item_sample_size,all_items=list(all_items),preferences=rankings_df,)
+    else: 
+        sampled_rankings_dfs, sampled_items, sampled_users = generate_sample_sets_stratified_by_bin(dataset_cfg, args.n_samples, args.user_sample_size, args.item_sample_size,
+        all_items=list(all_items), preferences=rankings_df, group_df=group_df, bin_col="binned", seed0=42) 
+    
+    # Format sampled rankings -- df to list for aggregation method compatibility 
     formatted_sampled_rankings = [format_sampled_rankings(df) for df in sampled_rankings_dfs]
 
+    # Process each sample in parallel
     for seed in range(args.n_samples):
-        write_dir = os.path.join(args.outdir, f"sample_{seed}")
+        
+        # Create output directory for this sample
+        write_dir = os.path.join(outdir, f"sample_{seed}")
         os.makedirs(write_dir, exist_ok=True)
 
-        # Save sampled artifacts
+        # Save sampled artifacts for reproducibility 
         pickle.dump(sampled_rankings_dfs[seed], open(os.path.join(write_dir, "sampled_rankings.pkl"), "wb"))
         pickle.dump(sampled_items[seed], open(os.path.join(write_dir, "sampled_items.pkl"), "wb"))
         pickle.dump(sampled_users[seed], open(os.path.join(write_dir, "sampled_users.pkl"), "wb"))
-
-        total = len(VANILLA_METHODS) + len(FAIR_METHODS)
+        
+        # Launch 
+        total = len(VANILLA_METHODS) + len(FAIR_METHODS) + len(OUR_METHODS)
         print(f"\n[seed={seed}] Processing {total} methods with jobs={args.jobs}...")
 
-        # Optionally complete rankings (so each user has full permutation of sampled items)
+        # Sanity check: validate complete rankings and all candidates labeled -- THROW ERROR if ids missing from samples  
         rankings_seed = formatted_sampled_rankings[seed]
-        sampled_items_seed = list(sampled_items[seed])
-
-        # THROW ERROR if partial ranking
-        validate_full_rankings(
-            rankings_seed,
-            sampled_items_seed,
-            context=f"[seed={seed}]"
-        )
+        sampled_items_seed = list(sampled_items[seed])        
+        validate_full_rankings(rankings_seed,sampled_items_seed,context=f"[seed={seed}]")
         validate_all_candidates_labeled(sampled_items_seed, group_df, context=f"[seed={seed}]", item_key=dataset_cfg['dataset']["keys"]["item_key"])
         
         lens = [len(r) for r in rankings_seed]
-        print(f"[seed={seed}]", "min/mean/max lens:", min(lens), sum(lens)/len(lens), max(lens))
-        print("expected:", len(sampled_items_seed))
+        # print(f"[seed={seed}]", "min/mean/max lens:", min(lens), sum(lens)/len(lens), max(lens))
+        # print("expected:", len(sampled_items_seed))
         assert min(lens) ==  sum(lens)/len(lens) == max(lens) == len(sampled_items_seed)
         
         # Precompute fairness inputs once per seed using SAFE mapping
         alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes = process_for_fair_ranking_safe(
-            sampled_items_seed, group_df, rankings_seed, complete=False, item_key=dataset_cfg['dataset']["keys"]["item_key"]
-        )
+            sampled_items_seed, group_df, rankings_seed, complete=False, item_key=dataset_cfg['dataset']["keys"]["item_key"])
+        pickle.dump(
+            {'alphas': alphas,
+            'betas': betas,
+            'attributes_map': attributes_map,
+            'idx_to_item': idx_to_item,
+            'num_attributes': num_attributes}, open(os.path.join(write_dir, "fair_ranking_process.pkl"), 'wb')) 
+        
+        user_to_idx = dict(zip(sampled_rankings_dfs[seed][user_key].unique(), range(len(sampled_rankings_dfs[seed][user_key].unique()))))
+        
+        # Precompute inputs for OUR ILP Methods ---
+        borda_ranking = borda_count(ranks_for_fairness, list(range(len(idx_to_item))))
+        borda_ranking = [x for x, _ in borda_ranking]
+        n_voters = len(ranks_for_fairness)
+        # invert idx_to_item (idx->item) to item->idx
+        item_to_idx = {item: idx for idx, item in idx_to_item.items()}
+        sampled_pref_df = sampled_rankings_dfs[seed].copy()
+        # map user ids -> 0..n_voters-1
+        sampled_pref_df[user_key] = sampled_pref_df[user_key].map(user_to_idx)
+        approvals_by_k = {}
+        for k in range(1, len(borda_ranking) + 1):
+            tmp = (
+                sampled_pref_df
+                .assign(Ranked_Items=lambda df: df["Ranked_Items"].apply(lambda x: x[:k]))
+                .explode("Ranked_Items")
+                .dropna(subset=["Ranked_Items"])
+            )
 
-        # Save effective candidates used for FAIR methods (post drop of missing labels)
-        effective_items = [idx_to_item[i] for i in range(len(idx_to_item))]
-        pickle.dump(effective_items, open(os.path.join(write_dir, "sampled_items_effective.pkl"), "wb"))
+            tmp["Ranked_Items"] = tmp["Ranked_Items"].map(item_to_idx)
 
-        futures = []
-        results_vanilla = {}
-        results_fair = {}
+            approvals_k = {}
+            for v in range(n_voters):
+                approvals_k[v] = (
+                    tmp[tmp[user_key] == v]["Ranked_Items"]
+                    .dropna()
+                    .astype(int)
+                    .unique()
+                    .tolist()
+                )
+            approvals_by_k[k] = approvals_k
+
+
+        failures = [] # collect failure records per seed
+        futures = [] # track futures for parallelism 
+        results_vanilla, results_fair, results_ours = {}, {} , {} 
+        # results_fair = {}
+        # results_ours = {}
 
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            # vanilla methods: use the (optionally completed) rankings + original sampled item ids
+            # vanilla
             for name in VANILLA_METHODS.keys():
-                futures.append(ex.submit(_run_vanilla_method, name, rankings_seed, sampled_items_seed))
+                futures.append(ex.submit(
+                    _safe_worker_call,
+                    "VANILLA", name, _run_vanilla_method,
+                    name, rankings_seed, sampled_items_seed
+                ))
 
-            # fair methods: use the safe, relabeled universe
+            # fair
             for name in FAIR_METHODS.keys():
                 futures.append(ex.submit(
-                    _run_fair_method, name,
-                    alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes
+                    _safe_worker_call,
+                    "FAIR", name, _run_fair_method,
+                    name, alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes
+                ))
+             
+            # ours   
+            for name in OUR_METHODS.keys():
+                futures.append(ex.submit(
+                    _safe_worker_call,
+                    "OURS", name, _run_our_method,
+                    name,
+                    borda_ranking, approvals_by_k, n_voters,
+                    alphas, betas, k, attributes_map, num_attributes,
+                    idx_to_item
                 ))
 
             for fut in tqdm(as_completed(futures), total=len(futures), desc=f"seed {seed}"):
-                name, result = fut.result()  # will raise with method name context
-
-                if name in VANILLA_METHODS:
-                    results_vanilla[name] = result
+                payload = fut.result()  # never raises now
+                if payload["ok"]:
+                    name = payload["method"]
+                    if payload["kind"] == "VANILLA":
+                        results_vanilla[name] = payload["result"]
+                    if payload["kind"] == "FAIR":
+                        results_fair[name] = payload["result"]
+                    if payload["kind"] == "OURS": 
+                        results_ours[name] = payload["result"]
                 else:
-                    results_fair[name] = result
+                    failures.append(payload)
 
-        # Write vanilla outputs
-        for name, result in results_vanilla.items():
-            file_path = os.path.join(write_dir, f"{name}.txt")
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(f"# Method: {name}\n")
-                f.write(f"# Rank ItemID Score\n")
-                for rank, (item, score) in enumerate(result, 1):
-                    f.write(f"{rank} {item} {score:.6f}\n")
+                # Write vanilla outputs
+                for name, result in results_vanilla.items():
+                    file_path = os.path.join(write_dir, f"{name}.txt")
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(f"# Method: {name}\n")
+                        f.write(f"# Rank ItemID Score\n")
+                        for rank, (item, score) in enumerate(result, 1):
+                            f.write(f"{rank} {item} {score:.6f}\n")
 
-        # Write fair outputs
-        for name, ranking in results_fair.items():
-            file_path = os.path.join(write_dir, f"{name}.txt")
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(f"# Method: {name}\n")
-                for rank, item in enumerate(ranking, 1):
-                    f.write(f"{rank} {item}\n")
+                # Write fair outputs
+                for name, ranking in results_fair.items():
+                    file_path = os.path.join(write_dir, f"{name}.txt")
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(f"# Method: {name}\n")
+                        for rank, item in enumerate(ranking, 1):
+                            f.write(f"{rank} {item}\n")
 
-        print(f"[seed={seed}] Done. Outputs in: {write_dir}")
+                # Write our outputs
+                for name, ranking in results_ours.items():
+                    file_path = os.path.join(write_dir, f"{name}.txt")
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(f"# Method: {name}\n")
+                        for rank, item in enumerate(ranking, 1):
+                            f.write(f"{rank} {item}\n")
+
+        # Save failures
+        fail_path = os.path.join(write_dir, "failures.jsonl")
+        with open(fail_path, "w", encoding="utf-8") as f:
+            for rec in failures:
+                f.write(json.dumps(rec) + "\n")
+
+        print(f"[seed={seed}] successes: vanilla={len(results_vanilla)} fair={len(results_fair)} ours={len(results_ours)}; "
+            f"failures={len(failures)}")
+        if failures:
+            # print a quick summary
+            by_method = {}
+            for rec in failures:
+                by_method.setdefault(rec["method"], 0)
+                by_method[rec["method"]] += 1
+            print("[seed=%d] failed methods: %s" % (seed, ", ".join(sorted(by_method.keys()))))
 
     print("\n" + "=" * 60)
     print("Aggregation Complete!")
-    print(f"All files are located in: {args.outdir}")
+    print(f"All files are located in: {outdir}")
     print("=" * 60)
 
 if __name__ == "__main__":

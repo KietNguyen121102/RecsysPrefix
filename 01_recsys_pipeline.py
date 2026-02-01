@@ -89,65 +89,11 @@ def calculate_ranking_metrics(predictions, k=10, threshold=4.0):
     # Return the average across all users
     return sum(recalls) / len(recalls), sum(ndcgs) / len(ndcgs)
 
-def export_recommendations_old(model_path, output_file='recommendations.csv'):
+def export_recommendations(data_cfg, model_path):
     """
     Generates Top-N recommendations for EVERY user and writes them to a CSV file line-by-line.
     """
-    print(f"Loading model from {model_path}...")
-    _, algo = dump.load(model_path)
-    trainset = algo.trainset
-    
-    # 1. Prepare internal lists to speed up the loop
-    all_item_inner_ids = list(trainset.all_items())
-    
-    print(f"Starting export to {output_file}...")
-    
-    # 2. Open the file in write mode
-    with open(output_file, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        
-        # Write Header
-        writer.writerow(['User_ID', 'Movie_ID', 'Estimated_Rating'])
-        
-        # 3. Iterate over every user in the training set
-        for i, u_inner_id in enumerate(trainset.all_users()):
-            
-            # Progress Logger
-            if i % 500 == 0:
-                print(f"  Processed {i}/{trainset.n_users} users...")
-            
-            # Get the Raw User ID (for the file)
-            u_raw_id = trainset.to_raw_uid(u_inner_id)
-            
-            # Identify items user has already rated (to exclude them)
-            user_rated_inner_ids = set(item_idx for (item_idx, _) in trainset.ur[u_inner_id])
-
-            
-            user_predictions = []
-            
-            # 4. Score all items for this user
-            for i_inner_id in all_item_inner_ids:
-                if i_inner_id not in user_rated_inner_ids:
-                    # Estimate rating (fast calculation)
-                    est_score = algo.estimate(u_inner_id, i_inner_id)
-                    user_predictions.append((i_inner_id, est_score))
-            
-            # 5. Pick Top-N
-            user_predictions.sort(key=lambda x: x[1], reverse=True)
-            top_recs = user_predictions
-            # ipdb.set_trace() 
-            
-            # 6. Write to file immediately
-            for i_inner_id, score in top_recs:
-                i_raw_id = trainset.to_raw_iid(i_inner_id)
-                writer.writerow([u_raw_id, i_raw_id, round(score, 4)])
-
-    print("--- Export Complete ---")
-
-def export_recommendations(data_cfg, model_path, output_file='recommendations.csv'):
-    """
-    Generates Top-N recommendations for EVERY user and writes them to a CSV file line-by-line.
-    """
+    output_file = data_cfg['dataset']['rec_set_path']
     print(f"Loading model from {model_path}...")
     _, algo = dump.load(model_path)
     trainset = algo.trainset
@@ -204,7 +150,7 @@ def surprise_pipeline(data_cfg, model_out):
     print("--- STARTING SURPRISE PIPELINE ---")
     
     # 1. Load Data
-    file_path = data_cfg['dataset']['file_path'] 
+    file_path = data_cfg['dataset']['ratings_file_path'] 
     
     
     if data_cfg['dataset']['name'] == 'ml1m': 
@@ -278,9 +224,7 @@ def surprise_pipeline(data_cfg, model_out):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, choices=['ml1m', 'goodreads'], default='ml1m')
-    # parser.add_argument("--data-path", type=str, default="data/ml-1m/ratings.dat")
     parser.add_argument("--model-out", type=str, default="./model")
-    parser.add_argument("--output-file", type=str, required=True)
     parser.add_argument("--top-n", type=int, default=10)
     args = parser.parse_args()
     print(args)
@@ -291,10 +235,5 @@ def main():
     surprise_pipeline(data_cfg=dataset_cfg, model_out=args.model_out)
     export_recommendations(dataset_cfg, args.model_out, output_file=args.output_file)
 
-
 if __name__ == "__main__":
     main()
-
-
-# surprise_pipeline()
-# export_recommendations('./model')
