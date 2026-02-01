@@ -7,16 +7,15 @@ from collections import deque
 import ipdb 
 
 
-print(cp.installed_solvers())
+# print(cp.installed_solvers())
 
-####
-####
-#Helper functions
-####
-####
-# CUTOFFN = 20
-# CUTOFFD = 100
-TOPK = 10
+class FairnessConstraintsInfeasible(Exception):
+    pass
+
+class ILPInfeasible(Exception):
+    pass
+
+TOPK = 5
 
 def Kendall_Tau_Dist(first, second):
     mappedrank = []
@@ -104,20 +103,19 @@ def Topological_Sort(adj):
 
     return topo_sort
 
-def process_for_fair_ranking(candidates, group_df, ranks_for_fairness):
+def process_for_fair_ranking(candidates, group_df, ranks_for_fairness, dataset_cfg):
+    item_key = dataset_cfg['dataset']['keys']['item_key']
     num_attributes = len(group_df['binned'].unique())
-    
-    attributes_df = group_df[group_df.item.isin(candidates)][['item', 'binned']]
-    attributes_df = attributes_df.sort_values(by='item')
-    item_to_idx = dict(zip(attributes_df.item, list(range(len(candidates)))))
-    idx_to_item = dict(zip(list(range(len(candidates))), attributes_df.item))
+    attributes_df = group_df[group_df[item_key].isin(candidates)][[item_key, 'binned']]
+    attributes_df = attributes_df.sort_values(by=item_key)
+    item_to_idx = dict(zip(attributes_df[item_key], list(range(len(candidates)))))
+    idx_to_item = dict(zip(list(range(len(candidates))), attributes_df[item_key]))
     item_to_attribute = dict(zip(list(range(len(candidates))), attributes_df.binned))
     for rank_idx in range(len(ranks_for_fairness)):
         for pos in range(len(ranks_for_fairness[rank_idx])):
             ranks_for_fairness[rank_idx][pos] = item_to_idx[ranks_for_fairness[rank_idx][pos]]
     alphas = [1.0 / num_attributes] * num_attributes
     betas = [1.0] * num_attributes
-
     return alphas, betas, ranks_for_fairness, item_to_attribute, idx_to_item, num_attributes 
 ####
 ####
@@ -317,6 +315,7 @@ def Consensus(alphas, betas, rankings, id_attribute, num_attributes):
     #form combined list at same time
     indegree_combined = []
     for attr in range(num_attributes):
+        # ipdb.set_trace() 
         for j in range(math.floor(alphas[attr] * TOPK)):
             topk_elements.add(indegree_attr[attr][j][0])
             elements_taken[attr] += 1

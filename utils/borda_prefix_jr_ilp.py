@@ -197,6 +197,12 @@ def check_any(name, obj):
 import cvxpy as cp
 import numpy as np
 import math
+import math
+from typing import Dict, List, Optional, Tuple
+
+import cvxpy as cp
+import numpy as np
+
 
 def ilp_prefix_jr_old(borda_ranking, approvals_by_k, n_voters):
     """
@@ -339,7 +345,7 @@ def ilp_prefix_jr_old(borda_ranking, approvals_by_k, n_voters):
     return ranking, problem.value
 
 
-def ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters, alphas, betas, k, attribute_dict, num_attributes):
+def ilp_prefix_jr_plus_fair_old(borda_ranking, approvals_by_k, n_voters, alphas, betas, k, attribute_dict, num_attributes):
     """
     borda_ranking: list[int] length n (candidate IDs 0..n-1)
     approvals_by_k: dict[int, dict[int, list[int]]]
@@ -466,6 +472,362 @@ def ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters, alphas, bet
         ranking[p] = c
 
     return ranking, problem.value
+
+def ilp_prefix_jr_plus_fair_old2(
+    borda_ranking: List[int],
+    approvals_by_k: Dict[int, Dict[int, List[int]]],
+    n_voters: int,
+    alphas: List[float],
+    betas: List[float],
+    k_fair: int,
+    attribute_dict: Dict[int, int],
+    num_attributes: int,
+    *,
+    solver: str = "GUROBI",
+    threads: int = 1,
+    presolve: int = 0,
+    fallback_solvers: Tuple[str, ...] = ("SCIP", "CBC"),
+) -> Tuple[Optional[List[int]], Optional[float], Optional[str]]:
+    """
+    Same as ilp_prefix_jr, plus group fairness constraints for the *top k_fair* positions.
+    NOTE: This implementation enforces fairness using x directly (recommended),
+          rather than introducing an unrelated Y variable.
+
+    Returns:
+        (ranking, objective_value, error_message)
+    """
+    n = len(borda_ranking)
+    borda_pos = {cand: i for i, cand in enumerate(borda_ranking)}
+
+    x = cp.Variable((n, n), boolean=True)
+    y = cp.Variable((n, n), boolean=True)
+    pos = cp.Variable(n, integer=True)
+
+    constraints = []
+    constraints += [cp.sum(x, axis=1) == 1]
+    constraints += [cp.sum(x, axis=0) == 1]
+
+    p_idx = np.arange(n)
+    constraints += [pos == x @ p_idx]
+    constraints += [pos >= 0, pos <= n - 1]
+
+    constraints += [cp.diag(y) == 0]
+    for c in range(n):
+        for d in range(c + 1, n):
+            constraints.append(y[c, d] + y[d, c] == 1)
+
+    M = n
+    for c in range(n):
+        for d in range(n):
+            if c == d:
+                continue
+            constraints.append(pos[c] <= pos[d] - 1 + M * (1 - y[c, d]))
+            constraints.append(pos[c] >= pos[d] + 1 - M * y[c, d])
+
+    # Prefix-JR constraints
+    z = cp.Variable((n_voters, n), boolean=True)
+    for k in range(1, n + 1):
+        quota = math.ceil(n_voters / k)
+        approvals_k = approvals_by_k[k]
+
+        for v in range(n_voters):
+            A_vk = approvals_k.get(v, [])
+            if not A_vk:
+                constraints.append(z[v, k - 1] == 0)
+                continue
+            sum_in_topk = cp.sum(x[A_vk, :k])
+            constraints.append(z[v, k - 1] <= sum_in_topk)
+            constraints.append(sum_in_topk <= (len(A_vk) * k) * z[v, k - 1])
+
+        for c in range(n):
+            Vc = [v for v in range(n_voters) if c in approvals_k.get(v, [])]
+            if len(Vc) < quota:
+                continue
+            constraints.append(cp.sum(1 - z[Vc, k - 1]) <= quota - 1)
+
+    # Fairness constraints on the top-k_fair positions, using x
+    # count_g = sum_{c in group g} sum_{p<k_fair} x[c,p]
+    for g in range(num_attributes):
+        group_members = [i for i in range(n) if attribute_dict.get(i) == g]
+        if not group_members:
+            continue
+
+        count_g = cp.sum(x[group_members, :k_fair])
+        lb = math.floor(alphas[g] * k_fair)
+        ub = math.ceil(betas[g] * k_fair)
+        constraints += [count_g >= lb, count_g <= ub]
+
+    # Objective
+    obj_terms = []
+    for c in range(n):
+        for d in range(n):
+            if c == d:
+                continue
+            if borda_pos[c] < borda_pos[d]:
+                obj_terms.append(y[d, c])
+    objective = cp.Minimize(cp.sum(obj_terms))
+
+    problem = cp.Problem(objective, constraints)
+    
+    try:
+        # problem.solve(
+        #     solver=cp.GUROBI,
+        #     verbose=False,
+        #     Threads=1,
+        #     Presolve=0,
+        #     # If you ever see INF_OR_UNBD later, these help:
+        #     # reoptimize=True,
+        #     # DualReductions=0,
+        # )
+        problem.solve(
+                    solver=cp.GUROBI,
+                    verbose=False,
+                    OutputFlag=0,
+                    Threads=threads,
+                    Presolve=2,
+                    TimeLimit=60,    # seconds
+                    MIPGap=0.01,     # 1% gap
+                )
+    except cp.error.SolverError as e:
+        # try a fallback solver so your pipeline keeps running
+        try:
+            problem.solve(solver=cp.SCIP, verbose=False)
+        except Exception:
+            return None, None, f"GUROBI failed during build/solve; SCIP fallback failed too: {e}"
+
+    if problem.status not in ("optimal", "optimal_inaccurate"):
+        # Another fallback
+        try:
+            problem.solve(solver=cp.CBC, verbose=False)
+        except Exception as e:
+            return None, None, f"Non-optimal status {problem.status}; CBC failed: {e}"
+
+    if problem.status not in ("optimal", "optimal_inaccurate"):
+        return None, None, f"Optimization failed with status: {problem.status}"
+
+    # Decode ranking from x
+    x_sol = x.value
+    if x_sol is None:
+        return None, None, "Solved but x.value is None (unexpected)."
+
+    ranking = [None] * n
+    for c in range(n):
+        p = int(np.argmax(x_sol[c, :]))
+        ranking[p] = c
+
+    return ranking, float(problem.value)
+
+    # def _try_solve(slv: str) -> bool:
+    #     try:
+    #         if slv.upper() == "GUROBI":
+    #             # problem.solve(
+    #             #     solver=cp.GUROBI,
+    #             #     verbose=False,
+    #             #     Threads=threads,
+    #             #     Presolve=presolve,
+    #             #     OutputFlag=0,
+    #             # )
+    #             # problem.solve(
+    #             #     solver=cp.GUROBI,
+    #             #     verbose=False,
+    #             #     OutputFlag=0,
+    #             #     Threads=threads,
+    #             #     Presolve=2,      # default/strong presolve
+    #             # )
+    #             problem.solve(
+    #                 solver=cp.GUROBI,
+    #                 verbose=True,
+    #                 OutputFlag=0,
+    #                 Threads=threads,
+    #                 Presolve=2,
+    #                 TimeLimit=60,    # seconds
+    #                 MIPGap=0.01,     # 1% gap
+    #             )
+
+    #         elif slv.upper() == "SCIP":
+    #             problem.solve(solver=cp.SCIP, verbose=False)
+    #         elif slv.upper() == "CBC":
+    #             problem.solve(solver=cp.CBC, verbose=False)
+    #         else:
+    #             problem.solve(solver=getattr(cp, slv), verbose=False)
+    #         return problem.status in ("optimal", "optimal_inaccurate")
+    #     except Exception:
+    #         return False
+
+    # ok = _try_solve(solver)
+    # if not ok:
+    #     for fb in fallback_solvers:
+    #         ok = _try_solve(fb)
+    #         if ok:
+    #             break
+
+    # if not ok:
+    #     return None, None, f"Optimization failed; status={problem.status}"
+
+    # x_sol = x.value
+    # if x_sol is None:
+    #     return None, None, "Solved but x.value is None (unexpected)."
+
+    # ranking = [None] * n
+    # for c in range(n):
+    #     ranking[int(np.argmax(x_sol[c, :]))] = c
+
+    # return ranking, float(problem.value)
+
+def check_fair_bounds(n, k_fair, attribute_dict, alphas, betas, num_attributes):
+    sizes = [0]*num_attributes
+    for c in range(n):
+        sizes[attribute_dict[c]] += 1
+
+    lbs, ubs = [], []
+    for g in range(num_attributes):
+        lb = math.floor(alphas[g] * k_fair)
+        ub = math.ceil(betas[g] * k_fair)
+        lbs.append(lb); ubs.append(ub)
+
+        if lb > sizes[g]:
+            raise ValueError(f"Group {g}: lb {lb} > available items {sizes[g]}")
+        if ub > sizes[g]:
+            # not fatal, but clamp is reasonable
+            pass
+
+    if sum(lbs) > k_fair:
+        raise ValueError(f"Sum of lbs {sum(lbs)} > k_fair {k_fair}")
+    if sum(ubs) < k_fair:
+        raise ValueError(f"Sum of ubs {sum(ubs)} < k_fair {k_fair}")
+
+
+def ilp_prefix_jr_plus_fair(
+    borda_ranking, approvals_by_k, n_voters,
+    alphas, betas, k_fair, attribute_dict, num_attributes,
+    *, threads=1, time_limit=None, mip_gap=None
+):
+    import cvxpy as cp
+    import numpy as np
+    import math
+
+    n = len(borda_ranking)
+    borda_pos = {cand: i for i, cand in enumerate(borda_ranking)}
+
+    #Feasibility checks 
+    check_fair_bounds(n, k_fair, attribute_dict, alphas, betas, num_attributes)
+    
+    x = cp.Variable((n, n), boolean=True)
+    y = cp.Variable((n, n), boolean=True)
+    pos = cp.Variable(n, integer=True)
+
+    constraints = []
+
+    # permutation
+    constraints += [cp.sum(x, axis=1) == 1]
+    constraints += [cp.sum(x, axis=0) == 1]
+
+    # pos
+    p_idx = np.arange(n)
+    constraints += [pos >= 0, pos <= n - 1]
+    for c in range(n):
+        constraints.append(pos[c] == cp.sum(cp.multiply(p_idx, x[c, :])))
+
+    # tournament
+    constraints += [cp.diag(y) == 0]
+    for c in range(n):
+        for d in range(c + 1, n):
+            constraints.append(y[c, d] + y[d, c] == 1)
+
+    # link y <-> pos
+    M = n
+    for c in range(n):
+        for d in range(n):
+            if c == d:
+                continue
+            constraints.append(pos[c] <= pos[d] - 1 + M * (1 - y[c, d]))
+            constraints.append(pos[c] >= pos[d] + 1 - M * y[c, d])
+
+    # ---------- Prefix-JR (use your faster x[A_vk, :k] form) ----------
+    z = cp.Variable((n_voters, n), boolean=True)
+
+    for kk in range(1, n + 1):
+        quota = math.ceil(n_voters / kk)
+        approvals_kk = approvals_by_k[kk]
+
+        for v in range(n_voters):
+            A_vk = approvals_kk.get(v, [])
+            if not A_vk:
+                constraints.append(z[v, kk - 1] == 0)
+                continue
+
+            sum_in_top = cp.sum(x[A_vk, :kk])
+            constraints.append(z[v, kk - 1] <= sum_in_top)
+            constraints.append(sum_in_top <= len(A_vk) * kk * z[v, kk - 1])
+
+        for c in range(n):
+            Vc = [v for v in range(n_voters) if c in approvals_kk.get(v, [])]
+            if len(Vc) >= quota:
+                constraints.append(cp.sum(1 - z[Vc, kk - 1]) <= quota - 1)
+
+    # ---------- FAIRNESS ON TOP-k_fair ----------
+    # candidate_in_topk[c] = 1 if c is placed in positions 0..k_fair-1
+    candidate_in_topk = cp.sum(x[:, :k_fair], axis=1)  # shape (n,)
+
+    # Build group indicator matrix G: shape (num_attributes, n)
+    G = np.zeros((num_attributes, n), dtype=float)
+    for c in range(n):
+        g = attribute_dict[c]
+        G[g, c] = 1.0
+
+    # count per group
+    group_counts = G @ candidate_in_topk  # shape (num_attributes,)
+
+    for g in range(num_attributes):
+        lb = math.floor(alphas[g] * k_fair)
+        ub = math.ceil(betas[g] * k_fair)
+        constraints += [group_counts[g] >= lb, group_counts[g] <= ub]
+
+    problem = cp.Problem(cp.Minimize(0), constraints)
+    problem.solve(solver=cp.GUROBI, verbose=False, LogFile="gurobi_feas.log")
+    print(problem.status)
+    exit()
+
+    # objective
+    obj_terms = []
+    for c in range(n):
+        for d in range(n):
+            if c != d and borda_pos[c] < borda_pos[d]:
+                obj_terms.append(y[d, c])
+    objective = cp.Minimize(cp.sum(obj_terms))
+    problem = cp.Problem(objective, constraints)
+
+    
+    
+    solve_kwargs = dict(
+        solver=cp.GUROBI,
+        verbose=False,
+        OutputFlag=0,
+        Threads=threads,
+        Presolve=2,
+        MIPFocus=1,
+        Heuristics=0.5,
+    )
+    if time_limit is not None:
+        solve_kwargs["TimeLimit"] = float(time_limit)
+    if mip_gap is not None:
+        solve_kwargs["MIPGap"] = float(mip_gap)
+
+    problem.solve(**solve_kwargs)
+
+    if problem.status not in ("optimal", "optimal_inaccurate"):
+        # fallback
+        problem.solve(solver=cp.SCIP, verbose=False)
+
+    if problem.status not in ("optimal", "optimal_inaccurate"):
+        raise ValueError(f"Optimization failed with status: {problem.status}")
+
+    x_sol = x.value
+    ranking = [None] * n
+    for c in range(n):
+        ranking[int(np.argmax(x_sol[c, :]))] = c
+
+    return ranking, float(problem.value)
 
 
 
@@ -662,17 +1024,16 @@ def test():
     print(f"  {ILP_ranking}")
     
     print(f"\nNumber of disagreements with Borda: {ILP_obj_value}")
-    
-    
-    
+
     
     # FAIR_ranking, FAIR_obj_value = ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters=num_voters, k=3, alphas=alphas, betas=betas, attribute_dict=item_attribute, num_attributes=2)
+    FAIR_ranking, FAIR_obj_value = ilp_prefix_jr_plus_fair(borda_ranking, approvals_by_k, n_voters=num_voters, alphas=alphas, betas=betas, k_fair = 10, attribute_dict=item_attribute, num_attributes=len(set(item_attribute.values())))
     
     
-    # print(f"\nPrefix-JR_FAIR constrained ranking (best to worst):")
-    # print(f"  {FAIR_ranking}")
+    print(f"\nPrefix-JR_FAIR constrained ranking (best to worst):")
+    print(f"  {FAIR_ranking}")
     
-    # print(f"\nNumber of disagreements with Borda: {FAIR_obj_value}")
+    print(f"\nNumber of disagreements with Borda: {FAIR_obj_value}")
     
     
 def test2(): 
@@ -680,14 +1041,20 @@ def test2():
     num_voters = 10
     preferences = pickle.load(open("/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/sampled_rankings.pkl", 'rb'))
     all_candidates = preferences['Ranked_Items'].explode().unique().tolist()
-
+    fair_info = pickle.load(open("/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/fair_ranking_process.pkl", 'rb')) 
+    alphas = fair_info['alphas']
+    betas = fair_info['betas']
+    item_attribute = fair_info['attributes_map']
+    
+    ipdb.set_trace() 
+    
     borda_ranking = load_consensus_ranking("/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/BordaCount.txt")
     item_to_idx = dict(zip(all_candidates, range(len(all_candidates))))
     user_to_idx = dict(zip(preferences['User_ID'].unique(), range(len(preferences['User_ID'].unique()))))
     borda_ranking = [item_to_idx[item] for item in borda_ranking]
     
-    ipdb.set_trace() 
-    # cohesive_groups = {}
+    # ipdb.set_trace() 
+    
     satisfaction = {}
     approvals_by_k = {}
 
@@ -710,17 +1077,25 @@ def test2():
             )
         approvals_by_k[k] = approvals_k
     
-    # ipdb.set_trace() 
-    ILP_ranking, ILP_obj_value = ilp_prefix_jr(borda_ranking, approvals_by_k, n_voters=num_voters)
+    # # ipdb.set_trace() 
+    # ILP_ranking, ILP_obj_value = ilp_prefix_jr(borda_ranking, approvals_by_k, n_voters=num_voters)
     
-    print("Borda ranking order (best to worst):")
-    print(f"  {borda_ranking}")
+    # print("Borda ranking order (best to worst):")
+    # print(f"  {borda_ranking}")
 
-    print(f"\nPrefix-JR constrained ranking (best to worst):")
-    print(f"  {ILP_ranking}")
+    # print(f"\nPrefix-JR constrained ranking (best to worst):")
+    # print(f"  {ILP_ranking}")
     
-    print(f"\nNumber of disagreements with Borda: {ILP_obj_value}")
+    # print(f"\nNumber of disagreements with Borda: {ILP_obj_value}")
     
     
-# test() 
+    FAIR_ranking, FAIR_obj_value = ilp_prefix_jr_plus_fair_old2(borda_ranking, approvals_by_k, n_voters=num_voters, alphas=alphas, betas=betas, k_fair = 10, attribute_dict=item_attribute, num_attributes=len(set(item_attribute.values())))
+    
+
+    print(f"\nPrefix-JR_FAIR constrained ranking (best to worst):")
+    print(f"  {FAIR_ranking}")
+    
+    print(f"\nNumber of disagreements with Borda: {FAIR_obj_value}")
+    
+# test2() 
     

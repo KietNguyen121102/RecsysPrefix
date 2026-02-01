@@ -9,7 +9,7 @@ import ipdb
 from tqdm import tqdm 
 import pandas as pd 
 import math 
-from cohesive_group_search import find_maximal_cohesive_groups, find_all_cohesive_groups
+from utils.cohesive_group_search import find_maximal_cohesive_groups, find_all_cohesive_groups
 
 # =============================================================================
 # 1. Axiom Checks
@@ -63,7 +63,6 @@ def PJR_check_satisfaction_given_committee(proposed_committee, partial_lists, l_
                     if len(np.intersect1d(approval_set, proposed_committee)) < l: #if less than l of them in the committee W
                         return False       
     return True
-
 
 def prune_satisfied_for_EJR(partial_lists, proposed_committee, l, user_key):
     for voter in partial_lists[user_key].unique().tolist(): #look through each voter
