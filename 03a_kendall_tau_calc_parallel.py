@@ -131,14 +131,15 @@ def main():
     with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
         dataset_cfg = yaml.safe_load(f)
 
+    user_key = dataset_cfg['dataset']['keys']['user_key']
     # 1. Load User Data
     # user_rankings = load_sampled_preferences(args.pref)
     # user_rankings = format_sampled_rankings_kt(user_rankings, dataset_cfg)
     rankings = load_sampled_preferences(args.pref) #load_user_lists(args.pref)
     user_groups = pickle.load(open(dataset_cfg['dataset']['user_group_file_path'], 'rb'))
-    user_rankings = rankings.merge(user_groups, on='User_ID')
-    user_groups = user_rankings.set_index("User_ID")['entropy_bin'].to_dict()
-    user_rankings = user_rankings.set_index("User_ID")["Ranked_Items"].to_dict()
+    user_rankings = rankings.merge(user_groups, on=user_key)
+    user_groups = user_rankings.set_index(user_key)['entropy_bin'].to_dict()
+    user_rankings = user_rankings.set_index(user_key)["Ranked_Items"].to_dict()
 
     # 2. Find all consensus files
     consensus_files = glob.glob(os.path.join(args.agg, "*.txt"))
@@ -215,9 +216,9 @@ def test():
     # 1. Load User Data
     rankings = load_sampled_preferences(args.pref) #load_user_lists(args.pref)
     user_groups = pickle.load(open(dataset_cfg['dataset']['user_group_file_path'], 'rb'))
-    user_rankings = rankings.merge(user_groups, on='User_ID')
-    user_groups = user_rankings.set_index("User_ID")['entropy_bin'].to_dict()
-    user_rankings = user_rankings.set_index("User_ID")["Ranked_Items"].to_dict()
+    user_rankings = rankings.merge(user_groups, on=user_key)
+    user_groups = user_rankings.set_index(user_key)['entropy_bin'].to_dict()
+    user_rankings = user_rankings.set_index(user_key)["Ranked_Items"].to_dict()
 
 
 if __name__ == "__main__":

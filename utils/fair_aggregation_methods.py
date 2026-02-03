@@ -15,7 +15,7 @@ class FairnessConstraintsInfeasible(Exception):
 class ILPInfeasible(Exception):
     pass
 
-TOPK = 5
+TOPK = 10
 
 def Kendall_Tau_Dist(first, second):
     mappedrank = []
@@ -626,6 +626,8 @@ def Closest_Fair_Ranking(rank, id_attribute, num_attributes):
     return fair_rank
 
 
+
+    
 
 
 

@@ -208,6 +208,7 @@ FAIR_METHODS = {
 OUR_METHODS = {
     'Our_Prefix_ILP': ilp_prefix_jr, 
     'Our_Prefix_Fair_ILP': ilp_prefix_jr_plus_fair,
+    'Joe_Prefix_JR': prefix_JR_joe
 }
 
 # =============================================================================
@@ -241,16 +242,17 @@ def _run_fair_method(method_name: str, alphas, betas, ranks_for_fairness, attrib
 
 def _run_our_method(method_name: str, borda_ranking, approvals_by_k, n_voters,
                     alphas, betas, k, attributes_map, num_attributes,
-                    idx_to_item):
+                    idx_to_item, rankings, all_items, user_key ):
     try:
         method = OUR_METHODS[method_name]
 
         if method_name == "Our_Prefix_ILP":
             result, obj = method(borda_ranking, approvals_by_k, n_voters)
-        else:
+        if method_name == 'Our_Prefix_Fair_ILP': 
             result, obj = method(borda_ranking, approvals_by_k, n_voters,
                                       alphas, betas, k, attributes_map, num_attributes)
-        
+        if method_name == 'Joe_Prefix_JR':
+            result = method(rankings, all_items, user_key)
         mapped_back = [idx_to_item[i] for i in result]
         return method_name, mapped_back
 
@@ -461,7 +463,7 @@ def main():
                     name,
                     borda_ranking, approvals_by_k, n_voters,
                     alphas, betas, k, attributes_map, num_attributes,
-                    idx_to_item
+                    idx_to_item, sampled_rankings_dfs[seed], sampled_items_seed, user_key
                 ))
 
             for fut in tqdm(as_completed(futures), total=len(futures), desc=f"seed {seed}"):

@@ -970,10 +970,73 @@ def ilp_prefix_jr(borda_ranking, approvals_by_k, n_voters, *, debug_sizes=False)
     return ranking, float(problem.value)
 
 
+def _get_cohesive_grps_(rankings, all_items, user_key): 
+    n = len(rankings[user_key].unique())
+    k = len(rankings['Ranked_Items'].unique())
+    cohesive_grps = []  
+    for c in all_items:
+        counter = 0 
+        approving_voters = rankings[rankings['Ranked_Items']
+                                         == c][user_key].unique().tolist()
+        if len(approving_voters) >= n/k: 
+            cohesive_grps.append((approving_voters, c))     
+    return cohesive_grps
+
+
+def prefix_JR_joe(rankings, all_items, user_key):
+    ranking = []  
+    satisfied_voters = set()
+    for prefix_idx in range(len(all_items)):
+        k = prefix_idx + 1
+        preferences_at_prefix = (
+            rankings
+            .assign(Ranked_Items=lambda df: df['Ranked_Items'].apply(lambda x: x[:k]))
+            .explode('Ranked_Items')
+            .reset_index(drop=True)
+        )
+        cohesive_grps = _get_cohesive_grps_(preferences_at_prefix, all_items, user_key) 
+        while cohesive_grps: 
+            for (voters, c) in cohesive_grps: 
+                if len(np.intersect1d(list(satisfied_voters), voters)) > 0: 
+                    cohesive_grps.remove((voters, c))
+                    continue 
+                ranking.append(c)
+                cohesive_grps.remove((voters, c))
+                satisfied_voters.update(voters)
+    if len(ranking) < len(all_items):
+        for c in all_items:
+            if c not in ranking:
+                ranking.append(c)
+    return ranking 
+
+
+
 # usage:
 # get all cohesive groups 
 # run ilp, include it in the evaluation pipeline 
 # -> sanity check: must satisfy JR always. otherwise something is very wrong
+
+def test3(): 
+    
+    preferences = pickle.load(open("/data2/rsalgani/Prefix/ml-1m/agg_files/sample_0/sampled_rankings.pkl", 'rb'))
+    all_candidates = preferences['Ranked_Items'].explode().unique().tolist()
+    
+    ranking = prefix_JR_joe(preferences, all_candidates, 'User_ID')
+    print("Prefix-JR ranking (best to worst):")
+    print(f"  {ranking}")
+    
+    for prefix_idx in range(len(ranking)):
+        k = prefix_idx + 1
+        preferences_at_prefix = (
+            preferences
+            .assign(Ranked_Items=lambda df: df['Ranked_Items'].apply(lambda x: x[:k]))
+            .explode('Ranked_Items')
+            .reset_index(drop=True)
+        )
+        flag = JR_check_satisfaction_given_committee(ranking[:k], preferences_at_prefix, all_candidates, n=len(preferences), k=k, user_key='User_ID')
+        print(k, flag)
+    
+# test3() 
 
 def test(): 
     num_candidates = 6

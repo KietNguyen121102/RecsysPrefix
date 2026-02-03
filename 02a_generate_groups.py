@@ -58,6 +58,7 @@ def entropy_from_probs(p: np.ndarray, eps: float = 1e-12) -> float:
 def generate_user_groups(args, dataset_cfg): 
     dataset = dataset_cfg['dataset']['name']
     item_key = dataset_cfg['dataset']['keys']['item_key']
+    user_key = dataset_cfg['dataset']['keys']['user_key']
     item_column = dataset_cfg['dataset']['format']['columns']['item_column']
     user_column = dataset_cfg['dataset']['format']['columns']['user_column']
     output_path = dataset_cfg['dataset']['user_group_file_path']
@@ -91,7 +92,7 @@ def generate_user_groups(args, dataset_cfg):
     labels=[0, 1, 2]
     )
     # ipdb.set_trace() 
-    user_feats = user_feats.rename(columns={user_column: 'User_ID'})
+    user_feats = user_feats.rename(columns={user_column: user_key})
     print(user_feats.groupby('entropy_bin').count())
     
     pickle.dump(user_feats, open(output_path, 'wb'))
