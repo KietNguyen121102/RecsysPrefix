@@ -1,4 +1,25 @@
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
 
+from temp_data_dump import axioms, c_at_10, lt_at_10, kt
+
+# ---------- Assemble into one dataframe ----------
+methods = sorted(set(axioms) | set(c_at_10) | set(lt_at_10) | set(kt))
+
+df = pd.DataFrame(index=methods, columns=["JR", "PJR", "EJR", "KT", "C@10", "LT@10"], dtype=float)
+
+for m, (jr, pjr, ejr) in axioms.items():
+    df.loc[m, ["JR", "PJR", "EJR"]] = [jr, pjr, ejr]
+
+for m, v in kt.items():
+    df.loc[m, "KT"] = v
+
+for m, v in c_at_10.items():
+    df.loc[m, "C@10"] = v
+
+for m, v in lt_at_10.items():
+    df.loc[m, "LT@10"] = v
 
 def pareto_frontier(points):
     """

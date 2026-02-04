@@ -50,13 +50,13 @@ order = df.sort_values(by="KT", ascending=False).index
 Z = Z.loc[order]
 Z_raw = Z_raw.loc[order]
 
-fig, ax = plt.subplots(figsize=(10, 0.35 * len(Z) + 2))
+fig, ax = plt.subplots(figsize=(16, 0.55 * len(Z) + 3))
 im = ax.imshow(Z.values, aspect="auto")
 
 ax.set_xticks(np.arange(len(metrics)))
-ax.set_xticklabels(metrics, rotation=30, ha="right")
+ax.set_xticklabels(metrics, rotation=0, ha="center", fontsize=20)
 ax.set_yticks(np.arange(len(Z.index)))
-ax.set_yticklabels(Z.index)
+ax.set_yticklabels(Z.index, fontsize=20)
 
 # Annotate raw values (format by metric)
 fmt = {
@@ -71,10 +71,15 @@ fmt = {
 for i, method in enumerate(Z.index):
     for j, met in enumerate(metrics):
         val = Z_raw.loc[method, met]
-        ax.text(j, i, fmt[met].format(val), ha="center", va="center", fontsize=8)
+        norm_val = Z.loc[method, met]
+        # Use white text on dark cells, black text on light cells
+        text_color = "white" if norm_val < 0.5 else "black"
+        ax.text(j, i, fmt[met].format(val), ha="center", va="center", fontsize=20, color=text_color, fontweight="medium")
 
-ax.set_title("ML-1M: Methods × Metrics (colors are per-metric min-max normalized)")
-plt.colorbar(im, ax=ax, fraction=0.02, pad=0.02, label="normalized score")
+ax.set_title("ML-1M: Methods × Metrics (colors are per-metric min-max normalized)", fontsize=22)
+cbar = plt.colorbar(im, ax=ax, fraction=0.02, pad=0.02)
+cbar.set_label("Normalized Score", fontsize=20)
+cbar.ax.tick_params(labelsize=20)
 
 plt.tight_layout()
 plt.savefig("ml1m_methods_metrics_heatmap.png", dpi=300)
