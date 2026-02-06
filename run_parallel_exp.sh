@@ -3,11 +3,13 @@ set -euo pipefail
 
 DATASET="$2"
 echo "Dataset: ${DATASET}"
+PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
+BASE="/data2/rsalgani/Prefix/backup_res/${DATASET}/agg_files" #"/data2/rsalgani/Prefix/ml-1m/agg_files"
+mkdir -p "${BASE}"
 # =============================================================================
 # RUNNING AGGREGATION
 # =============================================================================
 
-PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
 SCRIPT="/u/rsalgani/2024-2025/RecsysPrefix/02b_generate_agg_with_sampling_parallel.py"
 
 NSAMPLES=100
@@ -25,16 +27,17 @@ echo "NSAMPLES=${NSAMPLES} USERS=${USERS} ITEMS=${ITEMS} JOBS=${JOBS}"
   --n-samples "${NSAMPLES}" \
   --user-sample-size "${USERS}" \
   --item-sample-size "${ITEMS}" \
-  --jobs "${JOBS}" 
+  --jobs "${JOBS}" \
+  --outdir "${BASE}"
 
 
 # =============================================================================
 # RUNNING AXIOM SATISFACTION CALCULATION
 # =============================================================================
 
-PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
+# PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
 SCRIPT="/u/rsalgani/2024-2025/RecsysPrefix/03b_axiom_satisfaction_calc_parallel.py"
-BASE="/data2/rsalgani/Prefix/${DATASET}/agg_files" #"/data2/rsalgani/Prefix/ml-1m/agg_files"
+
 
 MAX_JOBS=8 #was 8 
 WORKERS=24
@@ -67,9 +70,9 @@ echo "All axiom satisfaction samples finished."
 # RUNNING KENDALL TAU CALCULATION
 # =============================================================================
 
-PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
+# PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
 SCRIPT="/u/rsalgani/2024-2025/RecsysPrefix/03a_kendall_tau_calc_parallel.py"
-BASE="/data2/rsalgani/Prefix/${DATASET}/agg_files" 
+# BASE="/data2/rsalgani/Prefix/${DATASET}/agg_files" 
 
 MAX_JOBS=8
 running=0
@@ -101,9 +104,9 @@ echo "All KT calculation samples finished."
 # RUNNING DIVERSITY CALCULATION
 # =============================================================================
 
-PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
+# PYTHON="/data2/rsalgani/miniconda3/envs/prefix/bin/python"
 SCRIPT="/u/rsalgani/2024-2025/RecsysPrefix/03c_calc_diversity.py"
-BASE="/data2/rsalgani/Prefix/${DATASET}/agg_files" 
+# BASE="/data2/rsalgani/Prefix/${DATASET}/agg_files" 
 
 MAX_JOBS=8
 running=0
@@ -131,6 +134,8 @@ wait
 echo "All samples finished."
 
 
-python3 /u/rsalgani/2024-2025/RecsysPrefix/04_gather_results.py --dataset "${DATASET}"
+python3 /u/rsalgani/2024-2025/RecsysPrefix/04_gather_results.py \
+  --dataset "${DATASET}"\
+  --input_base "${BASE}"
 
 echo "All done."

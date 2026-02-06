@@ -6,13 +6,13 @@ import ipdb
 import argparse
 import numpy as np
 
-def gather_axiom_satisfaction_results(dataset):
+def gather_axiom_satisfaction_results(BASE, dataset):
     """
     Gather axiom satisfaction results from multiple sample directories,
     and produce a summary table showing fraction/count of samples
     where each aggregation method satisfied each axiom.
     """
-    BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
+    # BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
     pattern = os.path.join(BASE, "sample_*", "axiom_satisfaction_results.pkl")
 
     paths = sorted(glob.glob(pattern))
@@ -47,7 +47,7 @@ def gather_axiom_satisfaction_results(dataset):
         summary[col] = summary[col].astype(str) + "/" + n_samples_per_method.astype(str) + \
                     " (" + (frac_true[col] * 100).round(1).astype(str) + "%)"
 
-    print("\n=== Combined ===")
+    print("\n=== Axiom Satisfaction Results ===")
     print(summary)
 
     # Save outputs if you want
@@ -56,9 +56,9 @@ def gather_axiom_satisfaction_results(dataset):
     summary.to_csv(os.path.join(out_dir, "count_total_percent.csv"))
     print(f"\nSaved to: {out_dir}")
   
-def gather_kendall_results_old(dataset): 
+def gather_kendall_results_old(BASE, dataset): 
    
-    BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
+    # BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
     pattern = os.path.join(BASE, "sample_*", "kendall_results.pkl")
 
     paths = sorted(glob.glob(pattern))
@@ -78,7 +78,7 @@ def gather_kendall_results_old(dataset):
     # ipdb.set_trace()
     # Stack into one MultiIndex frame: (sample, method) x axioms
     big = pd.concat(dfs)
-    methods_df = big.groupby('method')['KT'].agg({'mean', 'std'})
+    methods_df = big.groupby('method')['KT'].agg({'mean'})
     print(methods_df)
     # # Save outputs if you want
     out_dir = os.path.join(BASE, "summary_kt")
@@ -86,21 +86,8 @@ def gather_kendall_results_old(dataset):
     methods_df.to_csv(os.path.join(out_dir, "kt_performance.csv"))
     print(f"\nSaved to: {out_dir}")
 
-
-def gather_kendall_results(dataset, group_order=None):
-    """
-    Aggregates Kendall Tau results across samples.
-
-    Supports:
-      - old format: list[(method, KT)]
-      - new format: list[{"method","overall","by_group","counts"}]
-
-    Writes:
-      summary_kt/kt_overall.csv
-      summary_kt/kt_by_group.csv
-      summary_kt/kt_long.csv
-    """
-    BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"
+def gather_kendall_results(BASE, dataset, group_order=None):
+    # BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"
     # If you've switched filenames, update this:
     pattern_old = os.path.join(BASE, "sample_*", "kendall_results.pkl")
     pattern_new = os.path.join(BASE, "sample_*", "kendall_results_by_group.pkl")
@@ -187,7 +174,7 @@ def gather_kendall_results(dataset, group_order=None):
     )
 
     # Pivot group summary to match your “columns per group” style
-    group_pivot = group_summary.pivot(index="method", columns="group", values=["mean", "std", "count"])
+    group_pivot = group_summary.pivot(index="method", columns="group", values=["mean"])
     # nice ordering: (group -> mean/std/count)
     group_pivot = group_pivot.sort_index(axis=1, level=1)
 
@@ -196,25 +183,27 @@ def gather_kendall_results(dataset, group_order=None):
     # -------------------------
     out_dir = os.path.join(BASE, "summary_kt")
     os.makedirs(out_dir, exist_ok=True)
-
+    print("\n=== KT Overall Results ===")
+    print(overall_summary) 
+    
+    print("\n=== KT Group Results ===")
+    print(group_pivot)
     overall_summary.to_csv(os.path.join(out_dir, "kt_overall.csv"))
     group_pivot.to_csv(os.path.join(out_dir, "kt_by_group.csv"))
     big_long.to_csv(os.path.join(out_dir, "kt_long.csv"), index=False)
-
-    print(overall_summary.head(20))
-    print(group_pivot.head(20))
+    
     print(f"\nSaved to: {out_dir}")
     return overall_summary, group_pivot, big_long
 
-def gather_div_cvg_results(dataset): 
-    BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
+def gather_div_cvg_results(BASE, dataset): 
+    # BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
     pattern = os.path.join(BASE, "sample_*", "pop_group_coverage*.pkl")
     
     paths = sorted(glob.glob(pattern))
     
     dfs = []
     sample_names = []
-    ipdb.set_trace() 
+    
     for p in paths:
         data = pickle.load(open(p, "rb"))   
         df = pd.DataFrame(data).T
@@ -223,20 +212,23 @@ def gather_div_cvg_results(dataset):
         dfs.append(df)
         sample_names.append(os.path.basename(os.path.dirname(p))) 
 
-    ipdb.set_trace()
+    # ipdb.set_trace()
     # Stack into one MultiIndex frame: (sample, method) x axioms
     big = pd.concat(dfs)
     bins = [4, 3, 2, 0, 1]   # your bin columns
-    out = big.groupby(["method"])[bins].agg(["mean","std"])
+    out = big.groupby(["method"])[bins].agg(["mean"])
     
     # # Save outputs if you want
+    # ipdb.set_trace() 
+    print("\n=== Diversity C@10 Results ===")
+    print(out)
     out_dir = os.path.join(BASE, "summary_div")
     os.makedirs(out_dir, exist_ok=True)
     out.to_csv(os.path.join(out_dir, "div_cvg_performance.csv"))
     print(f"\nSaved to: {out_dir}")
 
-def gather_div_pct_results(dataset): 
-    BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
+def gather_div_pct_results(BASE, dataset): 
+    # BASE = f"/data2/rsalgani/Prefix/{dataset}/agg_files"   # change if needed
     pattern = os.path.join(BASE, "sample_*", "pop_group_percentage*.pkl")
     
     paths = sorted(glob.glob(pattern))
@@ -255,10 +247,12 @@ def gather_div_pct_results(dataset):
     # Stack into one MultiIndex frame: (sample, method) x axioms
     big = pd.concat(dfs)
     bins = [4, 3, 2, 0, 1]   # your bin columns
-    out = big.groupby(["method"])[bins].agg(["mean","std"])
+    out = big.groupby(["method"])[bins].agg(["mean"])
+    print("\n=== Diversity LT@10 Results ===")
     print(out)
     
     # # Save outputs if you want
+ 
     out_dir = os.path.join(BASE, "summary_div")
     os.makedirs(out_dir, exist_ok=True)
     out.to_csv(os.path.join(out_dir, "div_pct_performance.csv"))
@@ -272,8 +266,22 @@ if __name__ == "__main__":
         default="ml-1m",
         choices=["ml-1m", "goodreads"],
     )
+    parser.add_argument(
+        "--mode",
+        "-m",
+        default="full_run",
+        choices=["full_run", "k_exp"],
+    )
+    parser.add_argument(
+        "--input_base",
+        "-i",
+        default="/data2/rsalgani/Prefix",
+    )
     args = parser.parse_args()
-    gather_axiom_satisfaction_results(args.dataset)
-    gather_div_cvg_results(args.dataset)
-    gather_div_pct_results(args.dataset)
-    gather_kendall_results(args.dataset)
+    if args.mode == 'full_run':
+        gather_axiom_satisfaction_results(args.input_base, args.dataset)
+        gather_div_cvg_results(args.input_base,args.dataset)
+        gather_div_pct_results(args.input_base,args.dataset)
+        gather_kendall_results(args.input_base,args.dataset)
+    if args.mode == 'k_exp': 
+        return 0 

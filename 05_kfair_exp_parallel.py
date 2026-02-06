@@ -191,24 +191,12 @@ def validate_all_candidates_labeled(sampled_items, group_df, context, item_key):
             f"Missing count={len(missing)} example={missing[:30]}"
         )
 
-
-VANILLA_METHODS = {
-    "CombMIN": comb_min, "CombMAX": comb_max, "CombSUM": comb_sum,
-    "CombANZ": comb_anz, "CombMNZ": comb_mnz,
-    "MC1": mc1, "MC2": mc2, "MC3": mc3, "MC4": mc4,
-    "BordaCount": borda_count, "Dowdall": dowdall,
-    "Median": median_rank, "Mean": mean_rank,
-    "RRF": rrf, "iRANK": irank, "ER": er,
-    "PostNDCG": postndcg, "CG": cg, "DIBRA": dibra, 
-}
 FAIR_METHODS = {
     "KuhlmanConsensus": Consensus,
     "FairMedian": FairILP,
 }
 OUR_METHODS = {
-    'Our_Prefix_ILP': ilp_prefix_jr, 
     'Our_Prefix_Fair_ILP': ilp_prefix_jr_plus_fair,
-    'Joe_Prefix_JR': prefix_JR_joe
 }
 
 # =============================================================================
@@ -241,21 +229,13 @@ def _run_fair_method(method_name: str, alphas, betas, ranks_for_fairness, attrib
         raise RuntimeError(f"[FAIR method {method_name}] failed from {e}")
 
 def _run_our_method(method_name: str, borda_ranking, approvals_by_k, n_voters,
-                    alphas, betas, k, fairness_k, attributes_map, num_attributes,
+                    alphas, betas, fairness_k, attributes_map, num_attributes,
                     idx_to_item, rankings, all_items, user_key ):
     try:
         method = OUR_METHODS[method_name]
-
-        if method_name == "Our_Prefix_ILP":
-            result, obj = method(borda_ranking, approvals_by_k, n_voters)
-            mapped_back = [idx_to_item[i] for i in result]
-        if method_name == 'Our_Prefix_Fair_ILP':
-            result, obj = method(borda_ranking, approvals_by_k, n_voters,
-                                      alphas, betas, fairness_k, attributes_map, num_attributes)
-            mapped_back = [idx_to_item[i] for i in result]
-        if method_name == 'Joe_Prefix_JR':
-            result = method(rankings, all_items, user_key)
-            mapped_back = result
+        result, obj = method(borda_ranking, approvals_by_k, n_voters,alphas, betas, fairness_k, attributes_map, num_attributes)
+        mapped_back = [idx_to_item[i] for i in result]
+        
         return method_name, mapped_back
 
     except Exception as e:
@@ -282,7 +262,7 @@ def main():
     with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
         dataset_cfg = yaml.safe_load(f)
     print(dataset_cfg)
-    fairness_k = args.fairness_k
+    # fairness_k = args.fairness_k
     user_key = dataset_cfg['dataset']["keys"]["user_key"]
 
     
@@ -292,73 +272,50 @@ def main():
     print(args)
 
     # File housekeeping :) outdir = f"/data2/rsalgani/Prefix/{args.dataset}/agg_files"
+    outdir=args.outdir
     os.makedirs(args.outdir, exist_ok=True)
     
     # Load full rankings
     rankings_df, all_items = load_rankings_to_df(dataset_cfg)
 
-    
     # Load group labels for items (used in stratified sampling and fair methods)
     group_df = pickle.load(open(dataset_cfg['dataset']['item_group_file_path'], "rb"))
 
-    # Generate sample sets
-    if args.sampling_method == 'basic':
-        sampled_rankings_dfs, sampled_items, sampled_users = generate_sample_sets(dataset_cfg, n_samples=args.n_samples, n_users=args.user_sample_size,n_items=args.item_sample_size,all_items=list(all_items),preferences=rankings_df,)
-    else: 
-        sampled_rankings_dfs, sampled_items, sampled_users = generate_sample_sets_stratified_by_bin(dataset_cfg, args.n_samples, args.user_sample_size, args.item_sample_size,
-        all_items=list(all_items), preferences=rankings_df, group_df=group_df, bin_col="binned", seed0=42) 
-    
-    # Format sampled rankings -- df to list for aggregation method compatibility 
-    formatted_sampled_rankings = [format_sampled_rankings(df) for df in sampled_rankings_dfs]
-
     # Process each sample in parallel
     for seed in range(args.n_samples):
-        
-        # Create output directory for this sample
-        write_dir = os.path.join(args.outdir, f"sample_{seed}")
-        os.makedirs(write_dir, exist_ok=True)
+        read_dir = os.path.join(outdir, f"sample_{seed}")
 
-        # Save sampled artifacts for reproducibility 
-        pickle.dump(sampled_rankings_dfs[seed], open(os.path.join(write_dir, "sampled_rankings.pkl"), "wb"))
-        pickle.dump(sampled_items[seed], open(os.path.join(write_dir, "sampled_items.pkl"), "wb"))
-        pickle.dump(sampled_users[seed], open(os.path.join(write_dir, "sampled_users.pkl"), "wb"))
-        
-        # Launch 
-        total = len(VANILLA_METHODS) + len(FAIR_METHODS) + len(OUR_METHODS)
-        print(f"\n[seed={seed}] Processing {total} methods with jobs={args.jobs}...")
+        # Load sampled artifacts ONCE per seed
+        sampled_rankings = pickle.load(open(os.path.join(read_dir, "sampled_rankings.pkl"), "rb"))
+        sampled_items = pickle.load(open(os.path.join(read_dir, "sampled_items.pkl"), "rb"))
+        sampled_users = pickle.load(open(os.path.join(read_dir, "sampled_users.pkl"), "rb"))
 
-        # Sanity check: validate complete rankings and all candidates labeled -- THROW ERROR if ids missing from samples  
-        rankings_seed = formatted_sampled_rankings[seed]
-        sampled_items_seed = list(sampled_items[seed])        
-        validate_full_rankings(rankings_seed,sampled_items_seed,context=f"[seed={seed}]")
+        rankings_seed = format_sampled_rankings(sampled_rankings)
+        sampled_items_seed = list(sampled_items)
+
+        validate_full_rankings(rankings_seed, sampled_items_seed, context=f"[seed={seed}]")
         validate_all_candidates_labeled(sampled_items_seed, group_df, context=f"[seed={seed}]", item_key=dataset_cfg['dataset']["keys"]["item_key"])
-        
+
         lens = [len(r) for r in rankings_seed]
-        # print(f"[seed={seed}]", "min/mean/max lens:", min(lens), sum(lens)/len(lens), max(lens))
-        # print("expected:", len(sampled_items_seed))
-        assert min(lens) ==  sum(lens)/len(lens) == max(lens) == len(sampled_items_seed)
-        
+        assert min(lens) == sum(lens)/len(lens) == max(lens) == len(sampled_items_seed)
+
         # Precompute fairness inputs once per seed using SAFE mapping
         alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes = process_for_fair_ranking_safe(
-            sampled_items_seed, group_df, rankings_seed, complete=False, item_key=dataset_cfg['dataset']["keys"]["item_key"])
-        pickle.dump(
-            {'alphas': alphas,
-            'betas': betas,
-            'attributes_map': attributes_map,
-            'idx_to_item': idx_to_item,
-            'num_attributes': num_attributes}, open(os.path.join(write_dir, "fair_ranking_process.pkl"), 'wb')) 
-        
-        user_to_idx = dict(zip(sampled_rankings_dfs[seed][user_key].unique(), range(len(sampled_rankings_dfs[seed][user_key].unique()))))
-        
-        # Precompute inputs for OUR ILP Methods ---
+            sampled_items_seed, group_df, rankings_seed, complete=False, item_key=dataset_cfg['dataset']["keys"]["item_key"]
+        )
+
+        # OUR inputs once per seed
+        user_to_idx = {u: i for i, u in enumerate(sampled_rankings[user_key].unique())}
+
         borda_ranking = borda_count(ranks_for_fairness, list(range(len(idx_to_item))))
         borda_ranking = [x for x, _ in borda_ranking]
         n_voters = len(ranks_for_fairness)
-        # invert idx_to_item (idx->item) to item->idx
+
         item_to_idx = {item: idx for idx, item in idx_to_item.items()}
-        sampled_pref_df = sampled_rankings_dfs[seed].copy()
-        # map user ids -> 0..n_voters-1
+
+        sampled_pref_df = sampled_rankings.copy()
         sampled_pref_df[user_key] = sampled_pref_df[user_key].map(user_to_idx)
+
         approvals_by_k = {}
         for k in range(1, len(borda_ranking) + 1):
             tmp = (
@@ -367,7 +324,6 @@ def main():
                 .explode("Ranked_Items")
                 .dropna(subset=["Ranked_Items"])
             )
-
             tmp["Ranked_Items"] = tmp["Ranked_Items"].map(item_to_idx)
 
             approvals_k = {}
@@ -381,60 +337,50 @@ def main():
                 )
             approvals_by_k[k] = approvals_k
 
+        # Now loop over fairness_k values (no recomputation)
+        for fairness_k in [5, 10, 15, 20, 25]:
+            # Skip invalid k
+            
+            write_dir = os.path.join(outdir, f"sample_{seed}", f"k_{fairness_k}")
+            os.makedirs(write_dir, exist_ok=True)
 
-        failures = [] # collect failure records per seed
-        futures = [] # track futures for parallelism 
-        results_vanilla, results_fair, results_ours = {}, {} , {} 
+            total = len(FAIR_METHODS) + len(OUR_METHODS)
+            print(f"\n[seed={seed} k={fairness_k}] Processing {total} methods with jobs={args.jobs}...")
 
-        with ProcessPoolExecutor(max_workers=args.jobs) as ex:
-            # vanilla
-            for name in VANILLA_METHODS.keys():
-                futures.append(ex.submit(
-                    _safe_worker_call,
-                    "VANILLA", name, _run_vanilla_method,
-                    name, rankings_seed, sampled_items_seed
-                ))
+            failures = []
+            futures = []
+            results_fair, results_ours = {}, {}
 
-            # fair
-            for name in FAIR_METHODS.keys():
-                futures.append(ex.submit(
-                    _safe_worker_call,
-                    "FAIR", name, _run_fair_method,
-                    name, alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes, fairness_k
-                ))
-             
-            # ours   
-            for name in OUR_METHODS.keys():
-                futures.append(ex.submit(
-                    _safe_worker_call,
-                    "OURS", name, _run_our_method,
-                    name,
-                    borda_ranking, approvals_by_k, n_voters,
-                    alphas, betas, k, fairness_k, attributes_map, num_attributes,
-                    idx_to_item, sampled_rankings_dfs[seed], sampled_items_seed, user_key
-                ))
+            with ProcessPoolExecutor(max_workers=args.jobs) as ex:
+                # fair
+                for name in FAIR_METHODS.keys():
+                    futures.append(ex.submit(
+                        _safe_worker_call,
+                        "FAIR", f"{name}", _run_fair_method,
+                        name, alphas, betas, ranks_for_fairness, attributes_map, idx_to_item, num_attributes, fairness_k
+                    ))
+                # ours
+                for name in OUR_METHODS.keys():
+                    futures.append(ex.submit(
+                        _safe_worker_call,
+                        "OURS", f"{name}", _run_our_method,
+                        name,
+                        borda_ranking, approvals_by_k, n_voters,
+                        alphas, betas, fairness_k, attributes_map, num_attributes,
+                        idx_to_item, ranks_for_fairness, sampled_items_seed, user_key
+                    ))
 
-            for fut in tqdm(as_completed(futures), total=len(futures), desc=f"seed {seed}"):
-                payload = fut.result()  # never raises now
-                if payload["ok"]:
-                    name = payload["method"]
-                    if payload["kind"] == "VANILLA":
-                        results_vanilla[name] = payload["result"]
-                    if payload["kind"] == "FAIR":
-                        results_fair[name] = payload["result"]
-                    if payload["kind"] == "OURS": 
-                        results_ours[name] = payload["result"]
-                else:
-                    failures.append(payload)
-
-            # Write vanilla outputs
-            for name, result in results_vanilla.items():
-                file_path = os.path.join(write_dir, f"{name}.txt")
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(f"# Method: {name}\n")
-                    f.write(f"# Rank ItemID Score\n")
-                    for rank, (item, score) in enumerate(result, 1):
-                        f.write(f"{rank} {item} {score:.6f}\n")
+                for fut in tqdm(as_completed(futures), total=len(futures), desc=f"seed {seed} k {fairness_k}"):
+                    payload = fut.result()
+                    if payload["ok"]:
+                        mname = payload["method"]
+                        if payload["kind"] == "FAIR":
+                            # payload["method"] will be base name returned by worker ("KuhlmanConsensus"), so store that
+                            results_fair[mname] = payload["result"]
+                        elif payload["kind"] == "OURS":
+                            results_ours[mname] = payload["result"]
+                    else:
+                        failures.append(payload)
 
             # Write fair outputs
             for name, ranking in results_fair.items():
@@ -452,21 +398,19 @@ def main():
                     for rank, item in enumerate(ranking, 1):
                         f.write(f"{rank} {item}\n")
 
-        # Save failures
-        fail_path = os.path.join(write_dir, "failures.jsonl")
-        with open(fail_path, "w", encoding="utf-8") as f:
-            for rec in failures:
-                f.write(json.dumps(rec) + "\n")
+            # Save failures
+            fail_path = os.path.join(write_dir, "failures.jsonl")
+            with open(fail_path, "w", encoding="utf-8") as f:
+                for rec in failures:
+                    f.write(json.dumps(rec) + "\n")
 
-        print(f"[seed={seed}] successes: vanilla={len(results_vanilla)} fair={len(results_fair)} ours={len(results_ours)}; "
-            f"failures={len(failures)}")
-        if failures:
-            # print a quick summary
-            by_method = {}
-            for rec in failures:
-                by_method.setdefault(rec["method"], 0)
-                by_method[rec["method"]] += 1
-            print("[seed=%d] failed methods: %s" % (seed, ", ".join(sorted(by_method.keys()))))
+            print(f"[seed={seed} k={fairness_k}] successes: fair={len(results_fair)} ours={len(results_ours)}; failures={len(failures)}")
+            if failures:
+                by_method = {}
+                for rec in failures:
+                    by_method.setdefault(rec["method"], 0)
+                    by_method[rec["method"]] += 1
+                print("[seed=%d k=%d] failed methods: %s" % (seed, fairness_k, ", ".join(sorted(by_method.keys()))))
 
     print("\n" + "=" * 60)
     print("Aggregation Complete!")

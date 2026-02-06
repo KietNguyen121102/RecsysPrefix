@@ -6,16 +6,13 @@ import time
 from collections import deque
 import ipdb 
 
-
-# print(cp.installed_solvers())
-
 class FairnessConstraintsInfeasible(Exception):
     pass
 
 class ILPInfeasible(Exception):
     pass
 
-TOPK = 10
+# TOPK = 10
 
 def Kendall_Tau_Dist(first, second):
     mappedrank = []
@@ -183,7 +180,7 @@ def NormalILP(rankings):
 #FAIR ILP
 #Takes in the fairness parameters, rankings, mapping of elements to attributes
 #Returns the optimal fair median ranking
-def FairILP(alphas, betas, rankings, id_attribute, num_attributes):
+def FairILP(alphas, betas, rankings, id_attribute, num_attributes, TOPK=10):
 
     start_time = time.time()
     element_count = len(rankings[0])
@@ -278,7 +275,7 @@ def FairILP(alphas, betas, rankings, id_attribute, num_attributes):
 #This implementation of our algorithm uses ILP to solve the two partitions optimally
 #Think of this as the 'best case' scenario possible.
 #Takes in the fairness parameters, rankings, mapping of elements to attributes
-def Consensus(alphas, betas, rankings, id_attribute, num_attributes):
+def Consensus(alphas, betas, rankings, id_attribute, num_attributes, TOPK=10):
     # ipdb.set_trace() 
     element_count = len(rankings[0])
 
@@ -406,7 +403,7 @@ def Consensus(alphas, betas, rankings, id_attribute, num_attributes):
 
 #This implementation of our algorithm uses KWIKSORT to solve the standard rank aggregation problem
 #For details on KWIKSORT, see Ailon, Newman, Charikar 2007
-def OurAlgo_KS(alphas, betas, rankings, id_attribute, num_attributes):
+def OurAlgo_KS(alphas, betas, rankings, id_attribute, num_attributes, TOPK=10):
     element_count = len(rankings[0])
 
     #STEP 1: determining top-k elements
@@ -597,7 +594,7 @@ def BFI_Algo(alphas, betas, rankings, id_attribute, num_attributes):
     return obj_value
 
 #Helper function to find the closest fair ranking to the given rank
-def Closest_Fair_Ranking(rank, id_attribute, num_attributes):
+def Closest_Fair_Ranking(rank, id_attribute, num_attributes, TOPK):
     ipdb.set_trace() 
     elements_taken = [0] * num_attributes
     fair_rank = []

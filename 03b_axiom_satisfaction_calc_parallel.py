@@ -38,6 +38,65 @@ def _worker_init(preferences: pd.DataFrame, number_voters: int, all_candidates):
     _NUM_VOTERS = number_voters
     _ALL_CANDIDATES = all_candidates
 
+def evaluate_agg_dir(agg_dir: str, pref_path: str, workers: int, dataset_cfg: dict):
+    print("(2) Loading Consensus Files")
+    print("-" * 70)
+
+    consensus_files = glob.glob(os.path.join(agg_dir, "*.txt"))
+    if not consensus_files:
+        print(f"No .txt files found in {agg_dir}")
+        return None
+
+    preferences = load_sampled_preferences(pref_path)
+    number_voters = len(preferences[dataset_cfg['dataset']['keys']['user_key']].unique())
+    all_candidates = preferences.explode("Ranked_Items")["Ranked_Items"].unique()
+    number_candidates = len(all_candidates)
+
+    print("-" * 70)
+    print(f"RUN STATS for: {agg_dir}")
+    print("-" * 70)
+    print("Number of Voters:", number_voters)
+    print("Number of Candidates:", number_candidates)
+    print("Number of methods to evaluate:", len(consensus_files))
+    print("-" * 70)
+
+    print("(4) Calculating Axiom Satisfaction (parallel over methods)")
+    results = run_parallel(
+        preferences=preferences,
+        consensus_files=consensus_files,
+        all_candidates=all_candidates,
+        number_voters=number_voters,
+        max_workers=workers,
+        data_cfg=dataset_cfg,
+    )
+
+    # Print summary table
+    print("\n" + "=" * 60)
+    print(f"{'Method':<20} | {'JR':^5} | {'PJR':^5} | {'EJR':^5}")
+    print("-" * 60)
+
+    def mark(x):
+        return "✓" if all(x) else "✗"
+
+    for method, satisfaction in results:
+        jr, pjr, ejr = satisfaction["JR"], satisfaction["PJR"], satisfaction["EJR"]
+        print(f"{method:<20} | {mark(jr):^5} | {mark(pjr):^5} | {mark(ejr):^5}")
+
+    print("=" * 60)
+
+    # Save summary boolean table
+    results_df = pd.DataFrame(
+        {method: {k: all(v) for k, v in metrics.items()} for method, metrics in results}
+    ).T
+
+    # print("POTATO")
+    # exit()
+    out_path = os.path.join(agg_dir, "axiom_satisfaction_results.pkl")
+    # print(out_path)
+    pickle.dump(results_df, open(out_path, "wb"))
+    print(f"Saved: {out_path}")
+
+    return results_df
 
 # =============================================================================
 # 2. Method Evaluation (runs inside worker)
@@ -184,6 +243,15 @@ def main():
         choices=["ml-1m", "goodreads"],
         help="dataset name (for loading dataset config)",
     )
+    parser.add_argument(
+        "--mode",
+        "-m",
+        type=str,
+        default="single",
+        choices=["single", "multi_k"],
+        help="single: read --agg/*.txt. multi_k: read --agg/k_*/. (k_fair experiment layout)",
+    )
+
     args = parser.parse_args()
 
     print("=" * 70)
@@ -206,47 +274,68 @@ def main():
         print(f"No .txt files found in {args.agg}")
         return
 
-    print("-" * 70)
-    print(f"RUN STATS for: {args.agg}")
-    print("-" * 70)
-    print("Number of Voters:", number_voters)
-    print("Number of Candidates:", number_candidates)
-    print("Number of methods to evaluate:", len(consensus_files))
-    print("-" * 70)
+    
+    with open(f"/u/rsalgani/2024-2025/RecsysPrefix/data/{args.dataset}/params.yaml", "r") as f:
+        dataset_cfg = yaml.safe_load(f)
+        print(dataset_cfg)
 
-    print("(4) Calculating Axiom Satisfaction (parallel over methods)")
-    results = run_parallel(
-        preferences=preferences,
-        consensus_files=consensus_files,
-        all_candidates=all_candidates,
-        number_voters=number_voters,
-        max_workers=args.workers,
-        data_cfg=dataset_cfg,
-    )
+    if args.mode == "single":
+        evaluate_agg_dir(args.agg, args.pref, args.workers, dataset_cfg)
+        return
 
-    # 5. Print Table
-    print("\n" + "=" * 60)
-    print(f"{'Method':<20} | {'JR':^5} | {'PJR':^5} | {'EJR':^5}")
-    print("-" * 60)
+    # multi_k behavior: args.agg points to sample dir (contains k_*/ subdirs)
+    k_dirs = sorted([d for d in glob.glob(os.path.join(args.agg, "k_*")) if os.path.isdir(d)])
+    if not k_dirs:
+        print(f"[multi_k] No k_* directories found under {args.agg}")
+        return
 
-    def mark(x):
-        return "✓" if all(x) else "✗"
+    print(f"[multi_k] Found {len(k_dirs)} k directories to evaluate.")
+    for kd in k_dirs:
+        print(f"\n[multi_k] Evaluating {kd}")
+        evaluate_agg_dir(kd, args.pref, args.workers, dataset_cfg)
+    
+    # print("-" * 70)
+    # print(f"RUN STATS for: {args.agg}")
+    # print("-" * 70)
+    # print("Number of Voters:", number_voters)
+    # print("Number of Candidates:", number_candidates)
+    # print("Number of methods to evaluate:", len(consensus_files))
+    # print("-" * 70)
+
+    # print("(4) Calculating Axiom Satisfaction (parallel over methods)")
+    # results = run_parallel(
+    #     preferences=preferences,
+    #     consensus_files=consensus_files,
+    #     all_candidates=all_candidates,
+    #     number_voters=number_voters,
+    #     max_workers=args.workers,
+    #     data_cfg=dataset_cfg,
+    # )
+
+    # # 5. Print Table
+    # print("\n" + "=" * 60)
+    # print(f"{'Method':<20} | {'JR':^5} | {'PJR':^5} | {'EJR':^5}")
+    # print("-" * 60)
+
+    # def mark(x):
+    #     return "✓" if all(x) else "✗"
 
     
-    for method, satisfaction in results:
-        jr, pjr, ejr = satisfaction["JR"], satisfaction["PJR"], satisfaction["EJR"]
-        print(f"{method:<20} | {mark(jr):^5} | {mark(pjr):^5} | {mark(ejr):^5}")
+    # for method, satisfaction in results:
+    #     jr, pjr, ejr = satisfaction["JR"], satisfaction["PJR"], satisfaction["EJR"]
+    #     print(f"{method:<20} | {mark(jr):^5} | {mark(pjr):^5} | {mark(ejr):^5}")
 
-    print("=" * 60)
+    # print("=" * 60)
 
-    # Save summary boolean table
-    results_df = pd.DataFrame(
-        {method: {k: all(v) for k, v in metrics.items()} for method, metrics in results}
-    ).T
+    # # Save summary boolean table
+    # results_df = pd.DataFrame(
+    #     {method: {k: all(v) for k, v in metrics.items()} for method, metrics in results}
+    # ).T
 
-    out_path = os.path.join(args.agg, "axiom_satisfaction_results.pkl")
-    pickle.dump(results_df, open(out_path, "wb"))
-    print(f"Saved: {out_path}")
+    # # out_path = os.path.join(args.agg, "/{}/axiom_satisfaction_results.pkl")
+    # out_path = os.path.join(agg_dir, "axiom_satisfaction_results.pkl")
+    # pickle.dump(results_df, open(out_path, "wb"))
+    # print(f"Saved: {out_path}")
 
 
 if __name__ == "__main__":
